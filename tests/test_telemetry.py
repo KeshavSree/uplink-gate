@@ -137,9 +137,13 @@ def test_ingest_asks_for_versions_and_records_the_answer(
     assert link.commands[0] == ("CdhCore.version.VERSION", ["ALL"])
 
     link.reports = (VERSION_A, f"dict-sha256:{dict_a.hash[:16]}")
-    wait_until(lambda: registry.get_vehicle_state("sc1") is not None)
-    state = registry.get_vehicle_state("sc1")
-    assert state is not None and state.resolved_dictionary_hash == dict_a.hash
+
+    def resolved() -> bool:
+        # The reading is stored first and its resolution a moment later, so wait for both.
+        state = registry.get_vehicle_state("sc1")
+        return state is not None and state.resolved_dictionary_hash == dict_a.hash
+
+    wait_until(resolved)
     status = manager.status("sc1")
     assert status is not None and status["connected"] and status["channels_received"] >= 1
     kinds = {kind for kind, _ in manager.published}  # type: ignore[attr-defined]
