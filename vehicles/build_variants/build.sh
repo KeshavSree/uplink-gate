@@ -26,6 +26,10 @@ jobs="${BUILD_JOBS:-$(nproc)}"
 
 write_id_header() {
     printf '// Written by vehicles/build_variants/build.sh. Do not edit.\n#define GATE_DICTIONARY_ID "%s"\n' "$1" >"${id_header}"
+    # Force the one file that includes this header to be recompiled. Relying on file
+    # timestamps is not enough: on a fast machine the header can be rewritten within the
+    # same timestamp tick as the object file, and the build system then sees no change.
+    find "${project_root}" -name 'DictionaryId.cpp.o' -delete 2>/dev/null || true
 }
 
 cd "${fprime_root}"
@@ -72,6 +76,12 @@ fprime-util build -j "${jobs}"
 hash_second="$(sha256sum "${dictionary}" | cut -d ' ' -f 1)"
 if [ "${hash_first}" != "${hash_second}" ]; then
     echo "dictionary changed between build passes (${hash_first} -> ${hash_second})" >&2
+    exit 1
+fi
+
+# The value is what the gate will match on, so make sure it really is in the binary.
+if ! grep -aq "dict-sha256:${hash_first:0:16}" "${binary}"; then
+    echo "the built binary does not contain dictionary ID dict-sha256:${hash_first:0:16}" >&2
     exit 1
 fi
 

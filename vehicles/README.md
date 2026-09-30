@@ -43,13 +43,17 @@ dictionary's SHA-256 into `Ref/DictionaryId/DictionaryIdValue.hpp` and builds ag
 compiles that value into the flight software. The dictionary is generated from the FPP model
 only, so the second pass must not change it, and the script fails if it does.
 
-Two things found while writing this:
+Three things found while writing this:
 
 - A `Release` build of `v4.3.0` fails with GCC 13 on a `-Werror=stringop-overflow` warning in
   `Os/Generic/PriorityMemQueue.cpp`, so the default build type is used.
 - F Prime generates its version files once and does not refresh them on an incremental
   build. `build.sh` deletes them before every build. Without that, build B carried build A's
   project version.
+- The second pass must not rely on file timestamps to notice the rewritten header. On a fast
+  CI machine the header was rewritten within the same timestamp tick as the object file, the
+  build system saw no change, and the binary kept reporting `dict-sha256:unknown`. `build.sh`
+  now deletes the object file and checks that the final binary contains the dictionary ID.
 
 ## Running one by hand
 
