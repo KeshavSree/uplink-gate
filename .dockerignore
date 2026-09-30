@@ -1,0 +1,10 @@
+.git
+.venv
+.gate
+**/__pycache__
+**/node_modules
+web/dist
+tests
+docs
+logs
+vehicles

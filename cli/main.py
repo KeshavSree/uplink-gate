@@ -331,5 +331,18 @@ def log_command(
     console.print(table)
 
 
+@app.command("serve")
+def serve_command(
+    host: Annotated[str, typer.Option(help="Address to listen on.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to listen on.")] = 8000,
+) -> None:
+    """Run the gate service (REST and WebSocket API, telemetry ingest, web UI)."""
+    try:
+        import uvicorn
+    except ImportError as error:
+        raise _fail("the service needs the 'server' extra: uv sync --extra server") from error
+    uvicorn.run("api.app:create_app", factory=True, host=host, port=port)
+
+
 if __name__ == "__main__":
     app()

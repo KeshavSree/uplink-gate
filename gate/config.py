@@ -33,6 +33,21 @@ class GateConfig:
     #: An uplink needs a PASS decision younger than this many seconds.
     max_decision_age_s: float = 120.0
 
+    # --- how the flight software reports its identity and runs sequences ---
+    #: Telemetry channel holding the project version.
+    project_version_channel: str = "CdhCore.version.ProjectVersion"
+    #: Telemetry channel holding the dictionary ID (a Svc.Version custom version).
+    dictionary_id_channel: str = "CdhCore.version.CustomVersion01"
+    #: Command that makes the flight software send its versions again, and its arguments.
+    version_command: str = "CdhCore.version.VERSION"
+    version_command_args: tuple[str, ...] = ("ALL",)
+    #: How often the ingest asks each vehicle for its versions, in seconds.
+    identity_poll_s: float = 10.0
+    #: Instance name of the Svc.FpySequencer that runs uplinked bytecode.
+    sequencer: str = "Ref.fpySeq"
+    #: Directory on the vehicle that uplinked files are written to.
+    uplink_dir: str = "/tmp/uplink"
+
     @classmethod
     def from_env(cls) -> GateConfig:
         checks = os.environ.get("GATE_CHECKS")
@@ -45,6 +60,9 @@ class GateConfig:
             if checks
             else DEFAULT_CHECKS,
             max_decision_age_s=float(os.environ.get("GATE_MAX_DECISION_AGE_S", "120")),
+            identity_poll_s=float(os.environ.get("GATE_IDENTITY_POLL_S", "10")),
+            sequencer=os.environ.get("GATE_SEQUENCER", "Ref.fpySeq"),
+            uplink_dir=os.environ.get("GATE_UPLINK_DIR", "/tmp/uplink"),
         )
 
     def with_(self, **changes: object) -> GateConfig:
@@ -63,3 +81,7 @@ class GateConfig:
     @property
     def bytecode_store(self) -> Path:
         return self.home / "bytecode"
+
+    @property
+    def gds_store(self) -> Path:
+        return self.home / "gds"

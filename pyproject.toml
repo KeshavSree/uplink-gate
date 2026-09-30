@@ -48,6 +48,10 @@ markers = [
     "integration: needs the demo vehicles from `docker compose up` (deselected by default)",
 ]
 addopts = "-m 'not integration'"
+filterwarnings = [
+    # Raised on import by FastAPI's test client; nothing in this project to change.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.ruff]
 line-length = 100

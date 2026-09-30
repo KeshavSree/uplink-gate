@@ -1,0 +1,127 @@
+# Three live demo vehicles, the gate service, and its databases.
+#
+#   docker compose up --build        start everything (the first build compiles F Prime twice)
+#   ./scripts/reflash.sh sc1 B       switch sc1 to the other flight software build
+#   docker compose down -v           stop and delete all state
+#
+# Gate API and UI:  http://localhost:8000      Grafana:  http://localhost:3000
+# If a port is taken on your machine, set GATE_PORT, GRAFANA_PORT or INFLUX_PORT.
+
+name: uplink-gate
+
+x-vehicle: &vehicle
+  image: uplink-gate-vehicle:local
+  build:
+    context: ./vehicles
+  restart: unless-stopped
+  depends_on:
+    publish-dictionaries:
+      condition: service_completed_successfully
+
+services:
+  # Stands in for a build system publishing each build's dictionary to the ground.
+  publish-dictionaries:
+    image: uplink-gate-vehicle:local
+    build:
+      context: ./vehicles
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for build in /opt/builds/*; do
+          mkdir -p "/dictionaries/$$(basename "$$build")"
+          cp "$$build/RefTopologyDictionary.json" "/dictionaries/$$(basename "$$build")/"
+        done
+    volumes:
+      - dictionaries:/dictionaries
+
+  testbed:
+    <<: *vehicle
+    environment:
+      VEHICLE_NAME: testbed
+      VEHICLE_BUILD: A
+    ports: ["50051:50050"]
+
+  sc1:
+    <<: *vehicle
+    environment:
+      VEHICLE_NAME: sc1
+      VEHICLE_BUILD: A
+    ports: ["50052:50050"]
+
+  sc2:
+    <<: *vehicle
+    environment:
+      VEHICLE_NAME: sc2
+      VEHICLE_BUILD: B
+    ports: ["50053:50050"]
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: gate
+      POSTGRES_PASSWORD: gate
+      POSTGRES_DB: gate
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gate -d gate"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: gate
+      DOCKER_INFLUXDB_INIT_PASSWORD: gate-demo-password
+      DOCKER_INFLUXDB_INIT_ORG: gate
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: gate-demo-token
+      DOCKER_INFLUXDB_INIT_RETENTION: 7d
+    volumes:
+      - influx-data:/var/lib/influxdb2
+    ports: ["${INFLUX_PORT:-8086}:8086"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: gate-demo-password
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [influxdb]
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+
+  gate:
+    build:
+      context: .
+    environment:
+      GATE_DATABASE_URL: postgresql+psycopg://gate:gate@postgres:5432/gate
+      GATE_VEHICLES: testbed=testbed:50050,sc1=sc1:50050,sc2=sc2:50050
+      GATE_SEED_DICTIONARIES: /dictionaries
+      GATE_COMPILE_PACING_S: ${GATE_COMPILE_PACING_S:-0}
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_TOKEN: gate-demo-token
+      INFLUX_ORG: gate
+      INFLUX_BUCKET: telemetry
+    volumes:
+      - dictionaries:/dictionaries:ro
+      - gate-home:/var/lib/gate
+    depends_on:
+      postgres:
+        condition: service_healthy
+      publish-dictionaries:
+        condition: service_completed_successfully
+      influxdb:
+        condition: service_started
+    ports: ["${GATE_PORT:-8000}:8000"]
+    restart: unless-stopped
+
+volumes:
+  dictionaries:
+  postgres-data:
+  influx-data:
+  gate-home:

@@ -96,6 +96,94 @@ step. `--json` prints the decision for machines. A reading made with `gate state
 stale after 60 seconds, like a telemetry reading, so step 4 must follow step 2 within a
 minute (or pass `--max-age`).
 
+## Live demo: three vehicles
+
+Needs Docker. The first `up` builds F Prime's `Ref` deployment twice, which takes a while.
+
+```console
+$ docker compose up --build -d
+```
+
+This starts three vehicles, each a container running a real build of `Ref` and a real
+`fprime-gds`, plus the gate service, PostgreSQL (the registry), InfluxDB and Grafana.
+
+| Vehicle | Kind | Build at start |
+|---|---|---|
+| `testbed` | testbed | A, `gate-demo-1.0.0` |
+| `sc1` | spacecraft | A, `gate-demo-1.0.0` |
+| `sc2` | spacecraft | B, `gate-demo-1.1.0` |
+
+The gate service connects to each vehicle's GDS, asks the flight software for its versions
+(`CdhCore.version.VERSION`) every 10 seconds, and reads the answer from telemetry: the
+project version from `CdhCore.version.ProjectVersion` and the dictionary ID from
+`CdhCore.version.CustomVersion01`. No one tells the gate what a vehicle is running.
+
+```console
+$ API=http://localhost:8000/api
+
+# What is each vehicle running? (from live telemetry)
+$ curl -s $API/vehicles | jq -r '.[] | "\(.id)  \(.state.observed_project_version)  \(.resolution.message)"'
+
+# Compile one sequence for all three vehicles at once. Each job uses the dictionary that
+# vehicle is running and runs in its own worker process.
+$ curl -s -X POST "$API/compile/all?wait=true" -H 'Content-Type: application/json' \
+    -d '{"sequence_name": "signal_setup"}' | jq '.[] | {vehicle_id, status, worker_pid, compile: .compile.id}'
+
+# Check and uplink the bytecode compiled for sc1 (use the compile ID printed above).
+$ curl -s -X POST $API/check  -H 'Content-Type: application/json' -d '{"compile_id": 1, "vehicle_id": "sc1"}' | jq .result
+"PASS"
+$ curl -s -X POST $API/uplink -H 'Content-Type: application/json' -d '{"compile_id": 1, "vehicle_id": "sc1"}' | jq '{ok, detail}'
+{ "ok": true, "detail": "Completed sequence file /tmp/uplink/335aca577057c6ac.bin" }
+
+# The same bytecode for sc2, which runs the other build: refused, and nothing is sent.
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/uplink -H 'Content-Type: application/json' \
+    -d '{"compile_id": 1, "vehicle_id": "sc2"}'
+409
+
+# Live swap: reflash sc1 to build B while everything keeps running.
+$ ./scripts/reflash.sh sc1 B
+$ curl -s -X POST $API/check -H 'Content-Type: application/json' -d '{"compile_id": 1, "vehicle_id": "sc1"}' \
+    | jq -r '.result, .checks[0].message'
+BLOCK
+compiled with dictionary 4bbb2268b356 (gate-demo-1.0.0) but 'sc1' is running d6c09e7f3db8 (gate-demo-1.1.0)
+```
+
+`POST /api/uplink` is the only path that sends bytecode. It refuses without a PASS decision
+for exactly those bytes on that vehicle that is at most 120 seconds old. It then asks the
+vehicle for its versions again and re-runs the checks immediately before sending, so a
+vehicle that changed build after the decision is still caught. `WS /api/events` streams
+vehicle state changes, flight software events, compile progress and gate decisions.
+
+The end-to-end tests do all of this against the running stack:
+
+```console
+$ uv run pytest -m integration
+```
+
+Grafana at http://localhost:3000 has a small dashboard of vehicle telemetry
+(`ops/grafana/dashboards/vehicles.json`). Every telemetry channel is written to InfluxDB.
+
+### What happens without the gate
+
+I uplinked mismatched bytecode directly, bypassing the gate, to see what the flight software
+does with it. In both directions (bytecode for build B on a vehicle running build A, and the
+reverse) the Fpy sequencer accepted the file, because the header and checksum are valid. It
+ran the first statement, then the mismatched command was rejected with `FORMAT_ERROR` and
+the sequence stopped with `SequenceExitedWithError`:
+
+```
+Ref.fpySeq.LogActivityHi            Sequence /tmp/uplink/forB.bin: signal_setup: configuring SG1
+CdhCore.cmdDisp.OpCodeDispatched    Opcode 0x10011000 dispatched to port 12
+CdhCore.cmdDisp.OpCodeError         Opcode 0x10011000 completed with error FORMAT_ERROR
+Ref.fpySeq.SequenceExitedWithError  Sequence /tmp/uplink/forB.bin exited with error code 17
+```
+
+So in this case the result is a sequence that stops partway through, after its earlier
+statements have already run. F Prime caught it only because the two argument layouts have
+different sizes (it checks that a command's argument buffer is fully consumed). A change
+that keeps the size the same, such as swapping two arguments of the same width or
+renumbering an enumeration, would not be caught that way.
+
 ## How the gate decides which dictionary a vehicle is running
 
 1. Read the project version the vehicle reports.
@@ -134,8 +222,11 @@ report a hash of its own dictionary, and match on that.**
 ```
 gate/        the gate core, a plain Python library with no web dependency
 cli/         the `gate` command
+api/         the gate service (FastAPI): REST, WebSocket, compile workers
 vehicles/    Dockerfile and patches that build the two demo builds of Ref
 sequences/   example Fpy sequences
+ops/         Grafana provisioning and dashboard
+scripts/     reflash.sh, the live swap
 tests/       pytest suite; dictionaries under tests/fixtures are from real Ref builds
 ```
 
@@ -145,7 +236,7 @@ network calls.
 ## Status
 
 - [x] Phase 1: gate core and CLI
-- [ ] Phase 2: real vehicles in Docker, telemetry ingest, API, uplink
+- [x] Phase 2: real vehicles in Docker, telemetry ingest, API, uplink
 - [ ] Phase 3: testbed equivalence and flight rule checks
 - [ ] Phase 4: 3D web UI
 - [ ] Phase 5: simulation check

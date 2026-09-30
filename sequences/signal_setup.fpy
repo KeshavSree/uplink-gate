@@ -4,6 +4,6 @@
 # Frequency differs between the two demo builds (U32 in gate-demo-1.0.0, U16 in
 # gate-demo-1.1.0), so bytecode compiled for one build is wrong for the other.
 log("signal_setup: configuring SG1")
-Ref.SG1.Settings(100, 2.5, 0.0, Ref.SignalType.SINE)
+Ref.SG1.Settings(5, 2.5, 0.0, Ref.SignalType.SINE)
 Ref.SG1.Toggle()
 log("signal_setup: done")

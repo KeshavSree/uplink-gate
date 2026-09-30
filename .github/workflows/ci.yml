@@ -19,3 +19,23 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -q
+
+  integration:
+    name: Integration tests against real Ref builds
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras --frozen
+      # Builds F Prime's Ref deployment twice, then starts three vehicles and the gate service.
+      - run: docker compose up --build -d
+      - run: uv run pytest -m integration -q
+      - if: failure()
+        run: docker compose logs --tail 200
+      - if: always()
+        run: docker compose down -v
