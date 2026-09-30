@@ -184,6 +184,55 @@ different sizes (it checks that a command's argument buffer is fully consumed). 
 that keeps the size the same, such as swapping two arguments of the same width or
 renumbering an enumeration, would not be caught that way.
 
+## The checks
+
+A gate decision is BLOCK if any check blocks. Every check runs and reports separately, so a
+decision shows all the reasons at once.
+
+| Check | Passes when |
+|---|---|
+| `build_match` | the bytecode was compiled with the dictionary the vehicle is running |
+| `testbed_equiv` | these exact bytes already ran successfully on a testbed that was running the same dictionary |
+| `flight_rules` | the sequence breaks no flight rule, read with the vehicle's dictionary |
+
+The CLI runs `build_match` by default (`--checks` or `GATE_CHECKS` selects others). The
+service in `docker compose` runs all three.
+
+```console
+$ gate check sequences/signal_setup.bin --vehicle sc1 --checks build_match,testbed_equiv,flight_rules
+BLOCK  signal_setup.bin -> sc1
+  PASS  build_match    OK
+        compiled with dictionary 4bbb2268b356, which is what 'sc1' is running
+  BLOCK testbed_equiv  NO_TESTBED_RUN
+        this bytecode has not been run on a testbed running dictionary 4bbb2268b356
+  PASS  flight_rules   OK
+        3 rule(s) hold for the 2 command(s) in the sequence
+```
+
+**Testbed equivalence.** A testbed run is evidence only for the bytes that ran and the
+dictionary the testbed was running at the time. The gate records a `testbed_run` by itself
+when the testbed's Fpy sequencer reports that a sequence ended (`SequenceDone`, or a
+warning that names the file). The uplink adapter stores bytecode on a vehicle under its
+hash, so the event identifies the bytes. After a vehicle changes build, earlier testbed
+runs stop counting for it, and a testbed on the old build cannot produce new evidence.
+
+**Flight rules.** A flight rule is a documented way the vehicle must not be operated. The
+rule format is small and declarative ([`rules/demo_rules.yaml`](rules/demo_rules.yaml),
+described in [`gate/rules.py`](gate/rules.py)) and has three rule types: a forbidden
+command, a range or set of allowed values for a command argument, and a minimum time
+between two commands. These are the rule archetypes described by JPL's
+[FRESH](https://github.com/NASA-JPL-Teamtools-Studio/tts_fresh) flight rule checker, which
+is where the idea comes from. Like FRESH, the check is static: it reads the commands,
+constant arguments and constant waits out of the bytecode
+([`gate/bytecode.py`](gate/bytecode.py), using the Fpy package's own deserializer) and does
+not run the sequence. An argument computed while the sequence runs cannot be verified and
+counts as a violation. A wait inside a branch or a loop is not trusted.
+
+Because the bytecode is decoded with the dictionary of the target vehicle, this check also
+notices a build mismatch on its own: the argument bytes of `Ref.SG1.Settings` compiled for
+one build do not fit the other build's definition, and the check blocks with
+`BYTECODE_UNREADABLE`.
+
 ## How the gate decides which dictionary a vehicle is running
 
 1. Read the project version the vehicle reports.
@@ -225,6 +274,7 @@ cli/         the `gate` command
 api/         the gate service (FastAPI): REST, WebSocket, compile workers
 vehicles/    Dockerfile and patches that build the two demo builds of Ref
 sequences/   example Fpy sequences
+rules/       example flight rules
 ops/         Grafana provisioning and dashboard
 scripts/     reflash.sh, the live swap
 tests/       pytest suite; dictionaries under tests/fixtures are from real Ref builds
@@ -237,7 +287,7 @@ network calls.
 
 - [x] Phase 1: gate core and CLI
 - [x] Phase 2: real vehicles in Docker, telemetry ingest, API, uplink
-- [ ] Phase 3: testbed equivalence and flight rule checks
+- [x] Phase 3: testbed equivalence and flight rule checks
 - [ ] Phase 4: 3D web UI
 - [ ] Phase 5: simulation check
 

@@ -19,6 +19,7 @@ from gate.engine import evaluate
 from gate.registry import VEHICLE_KINDS, Registry, UnknownVehicleError, utcnow
 from gate.resolve import resolve_running_dictionary
 from gate.results import CheckStatus, GateDecision
+from gate.rules import RuleError, load_rules_file
 
 EXIT_PASS = 0
 EXIT_ERROR = 1
@@ -37,7 +38,9 @@ state_app = typer.Typer(
 )
 app.add_typer(dict_app, name="dict")
 app.add_typer(vehicle_app, name="vehicle")
+rules_app = typer.Typer(help="Flight rules the flight_rules check evaluates.", no_args_is_help=True)
 app.add_typer(state_app, name="state")
+app.add_typer(rules_app, name="rules")
 
 console = Console(highlight=False)
 error_console = Console(stderr=True, highlight=False)
@@ -175,6 +178,36 @@ def state_show(vehicle_id: Annotated[str, typer.Argument(help="Vehicle ID.")]) -
         console.print(f"  dictionary ID  {state.observed_dictionary_id or '-'}")
         console.print(f"  observed at    {state.observed_at.isoformat()} ({state.source})")
     console.print(f"  {resolution.message}")
+
+
+# --- rules --------------------------------------------------------------------------------
+
+
+@rules_app.command("load")
+def rules_load(
+    path: Annotated[Path, typer.Argument(help="A YAML rules file. Replaces all stored rules.")],
+) -> None:
+    """Load flight rules from a file into the registry."""
+    try:
+        count = _registry().load_flight_rules(load_rules_file(path))
+    except RuleError as error:
+        raise _fail(str(error)) from error
+    console.print(f"loaded {count} flight rule(s) from {path}")
+
+
+@rules_app.command("list")
+def rules_list() -> None:
+    """List the flight rules in the registry."""
+    table = Table("id", "type", "applies to", "definition")
+    for row in _registry().list_flight_rules():
+        definition = {k: v for k, v in row.rule_json.items() if k not in ("type", "description")}
+        table.add_row(
+            row.id,
+            str(row.rule_json.get("type")),
+            _short(row.dictionary_hash) if row.dictionary_hash else "all dictionaries",
+            ", ".join(f"{k}={v}" for k, v in definition.items()),
+        )
+    console.print(table)
 
 
 # --- compile ------------------------------------------------------------------------------

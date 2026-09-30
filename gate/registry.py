@@ -424,6 +424,17 @@ class Registry:
             statement = select(Compile).where(Compile.bytecode_sha256 == bytecode_sha256)
             return list(session.scalars(statement.order_by(Compile.id)))
 
+    def bytecode_sha256_by_prefix(self, prefix: str) -> str | None:
+        """The full bytecode hash of a compile record, if exactly one starts with `prefix`."""
+        with self.session() as session:
+            statement = (
+                select(Compile.bytecode_sha256)
+                .where(Compile.bytecode_sha256.startswith(prefix, autoescape=True))
+                .distinct()
+            )
+            hashes = list(session.scalars(statement))
+        return hashes[0] if len(hashes) == 1 else None
+
     def list_compiles(self, vehicle_id: str | None = None, limit: int = 50) -> list[Compile]:
         with self.session() as session:
             statement = select(Compile)
@@ -515,6 +526,16 @@ class Registry:
             )
 
     # --- flight rules -------------------------------------------------------------------
+
+    def load_flight_rules(self, rules: Sequence[Any]) -> int:
+        """Replace all stored rules with `gate.rules.Rule` objects. Returns how many."""
+        self.replace_flight_rules(
+            [
+                FlightRule(id=r.id, dictionary_hash=r.dictionary_hash, rule_json=r.to_json())
+                for r in rules
+            ]
+        )
+        return len(rules)
 
     def replace_flight_rules(self, rules: Sequence[FlightRule]) -> None:
         with self.session() as session:

@@ -32,7 +32,9 @@ from gate.dictionary import DictionaryError
 from gate.engine import evaluate
 from gate.registry import Compile, Registry, Vehicle, utcnow
 from gate.resolve import resolve_running_dictionary
+from gate.rules import RuleError, load_rules_file
 from gate.telemetry import IngestManager, VehicleComms
+from gate.testbed import TestbedRecorder
 from gate.uplink import UplinkAdapter, UplinkRefused
 
 log = logging.getLogger(__name__)
@@ -57,6 +59,8 @@ class Settings:
     influx_token: str = ""
     influx_org: str = "gate"
     influx_bucket: str = "telemetry"
+    #: YAML flight rules file loaded into the registry at startup, if set.
+    rules_file: Path | None = None
     start_ingest: bool = True
 
     @classmethod
@@ -68,6 +72,7 @@ class Settings:
                 vehicles[vehicle_id.strip()] = endpoint.strip()
         seed = os.environ.get("GATE_SEED_DICTIONARIES")
         web = os.environ.get("GATE_WEB_DIR", "web/dist")
+        rules = os.environ.get("GATE_RULES_FILE")
         return cls(
             vehicles=vehicles,
             seed_dictionaries=Path(seed) if seed else None,
@@ -79,6 +84,7 @@ class Settings:
             influx_token=os.environ.get("INFLUX_TOKEN", ""),
             influx_org=os.environ.get("INFLUX_ORG", "gate"),
             influx_bucket=os.environ.get("INFLUX_BUCKET", "telemetry"),
+            rules_file=Path(rules) if rules else None,
         )
 
 
@@ -154,6 +160,7 @@ class GateService:
         self.settings = settings or Settings.from_env()
         self.registry = Registry(self.config)
         self.bus = EventBus()
+        self.recorder = TestbedRecorder(self.registry, self.config, publish=self.bus.publish)
         self.manager: IngestManager | None = None
         self.comms = comms
         self.jobs: dict[int, CompileJob] = {}
@@ -180,7 +187,11 @@ class GateService:
                 except Exception as error:
                     log.warning("InfluxDB sink disabled: %s", error)
             self.manager = IngestManager(
-                self.registry, self.config, publish=self.bus.publish, sink=self._sink
+                self.registry,
+                self.config,
+                publish=self.bus.publish,
+                sink=self._sink,
+                on_event=self.recorder.on_event,
             )
             self.manager.start()
             self.comms = self.manager
@@ -208,6 +219,13 @@ class GateService:
                     log.warning("skipping %s: %s", path, error)
         for vehicle_id, endpoint in self.settings.vehicles.items():
             self.registry.upsert_vehicle(vehicle_id, gds_endpoint=endpoint)
+        rules_file = self.settings.rules_file
+        if rules_file is not None and rules_file.is_file():
+            try:
+                count = self.registry.load_flight_rules(load_rules_file(rules_file))
+                log.info("loaded %d flight rule(s) from %s", count, rules_file)
+            except RuleError as error:
+                log.warning("flight rules not loaded: %s", error)
 
     # --- views ----------------------------------------------------------------------------
 
@@ -524,6 +542,23 @@ def create_app(
     @app.get("/api/uplinks")
     def uplinks(vehicle_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return [u.to_dict() for u in registry.list_uplinks(vehicle_id, limit=limit)]
+
+    @app.get("/api/rules")
+    def rules() -> list[dict[str, Any]]:
+        return [r.to_dict() for r in registry.list_flight_rules()]
+
+    @app.get("/api/testbed-runs")
+    def testbed_runs(limit: int = 50) -> list[dict[str, Any]]:
+        return [r.to_dict() for r in registry.list_testbed_runs(limit)]
+
+    @app.get("/api/config")
+    def config_() -> dict[str, Any]:
+        return {
+            "checks": list(service.config.checks),
+            "max_state_age_s": service.config.max_state_age_s,
+            "max_decision_age_s": service.config.max_decision_age_s,
+            "allow_dirty": service.config.allow_dirty,
+        }
 
     @app.get("/api/events/recent")
     def recent_events(limit: int = 100) -> list[dict[str, Any]]:

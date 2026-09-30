@@ -294,7 +294,7 @@ class VehicleIngest:
         publish: Publish | None = None,
         sink: ChannelSink | None = None,
         link_factory: LinkFactory = GdsLink,
-        on_event: Callable[[EventReading], None] | None = None,
+        on_event: Callable[[EventReading], Any] | None = None,
     ) -> None:
         self.registry = registry
         self.vehicle_id = vehicle_id
@@ -507,7 +507,7 @@ class IngestManager:
         publish: Publish | None = None,
         sink: ChannelSink | None = None,
         link_factory: LinkFactory = GdsLink,
-        on_event: Callable[[EventReading], None] | None = None,
+        on_event: Callable[[EventReading], Any] | None = None,
     ) -> None:
         self.registry = registry
         self.config = config or registry.config

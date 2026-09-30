@@ -20,8 +20,14 @@ from gate.results import CheckResult, GateDecision, Reason, Result
 def available_checks() -> dict[str, Check]:
     """All checks by name. Imported lazily so the core stays importable without extras."""
     from gate.checks.build_match import build_match
+    from gate.checks.flight_rules import flight_rules
+    from gate.checks.testbed_equiv import testbed_equiv
 
-    return {"build_match": build_match}
+    return {
+        "build_match": build_match,
+        "testbed_equiv": testbed_equiv,
+        "flight_rules": flight_rules,
+    }
 
 
 def evaluate(

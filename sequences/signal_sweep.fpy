@@ -1,0 +1,7 @@
+# Step signal generator 1 through three frequencies, leaving time between the changes.
+Ref.SG1.Settings(2, 1.0, 0.0, Ref.SignalType.SINE)
+sleep(3)
+Ref.SG1.Settings(4, 1.0, 0.0, Ref.SignalType.SINE)
+sleep(3)
+Ref.SG1.Settings(8, 1.0, 0.0, Ref.SignalType.SINE)
+log("signal_sweep: done")

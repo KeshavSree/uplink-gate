@@ -102,6 +102,8 @@ services:
       GATE_DATABASE_URL: postgresql+psycopg://gate:gate@postgres:5432/gate
       GATE_VEHICLES: testbed=testbed:50050,sc1=sc1:50050,sc2=sc2:50050
       GATE_SEED_DICTIONARIES: /dictionaries
+      GATE_RULES_FILE: /app/rules/demo_rules.yaml
+      GATE_CHECKS: build_match,testbed_equiv,flight_rules
       GATE_COMPILE_PACING_S: ${GATE_COMPILE_PACING_S:-0}
       INFLUX_URL: http://influxdb:8086
       INFLUX_TOKEN: gate-demo-token

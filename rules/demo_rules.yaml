@@ -1,0 +1,32 @@
+# Flight rules for the demo Ref deployment.
+#
+# A flight rule is a documented way the vehicle must not be operated. The gate's
+# flight_rules check evaluates these statically against the bytecode, decoded with the
+# dictionary the target vehicle is running. Rule types are described in gate/rules.py.
+
+rules:
+  - id: sg-frequency-range
+    type: argument_range
+    command: "Ref.SG*.Settings"
+    argument: Frequency
+    min: 1
+    max: 12
+    description: >
+      The signal generators sample at 25 Hz. SignalGen rejects a frequency of 0 and any
+      frequency above 12 Hz with VALIDATION_ERROR, which would stop the sequence partway.
+
+  - id: sg-retune-spacing
+    type: min_separation
+    first: "Ref.SG1.Settings"
+    second: "Ref.SG1.Settings"
+    seconds: 2
+    description: >
+      Changing the settings resets the signal history. Leave at least 2 s between two
+      changes so each setting produces at least one full telemetry sample.
+
+  - id: no-parameter-save
+    type: forbidden_command
+    command: "FileHandling.prmDb.PRM_SAVE_FILE"
+    description: >
+      Saving the parameter database overwrites the stored parameters. It is commanded by
+      hand after review, never from a sequence.

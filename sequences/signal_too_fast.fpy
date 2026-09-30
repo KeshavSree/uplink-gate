@@ -1,0 +1,6 @@
+# Breaks two demo flight rules on purpose:
+#   sg-frequency-range   20 Hz is above the 12 Hz limit
+#   sg-retune-spacing    the second change follows the first after only 1 s
+Ref.SG1.Settings(5, 1.0, 0.0, Ref.SignalType.SINE)
+sleep(1)
+Ref.SG1.Settings(20, 1.0, 0.0, Ref.SignalType.SINE)

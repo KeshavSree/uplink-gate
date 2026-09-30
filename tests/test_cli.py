@@ -132,3 +132,39 @@ def test_vehicle_and_state_listing(sequence: Path) -> None:
     assert VERSION_A in out
     assert VERSION_A in run("dict", "list")
     run("vehicle", "add", "x", "--kind", "rover", code=EXIT_ERROR)
+
+
+def test_rules_load_and_list(tmp_path: Path) -> None:
+    rules = Path(__file__).parent.parent / "rules" / "demo_rules.yaml"
+    assert "loaded 3 flight rule(s)" in run("rules", "load", rules)
+    out = run("rules", "list")
+    assert "sg-frequency-range" in out and "min_separation" in out
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("rules: nope")
+    run("rules", "load", bad, code=EXIT_ERROR)
+
+
+def test_check_shows_each_check_separately(sequence: Path) -> None:
+    rules = Path(__file__).parent.parent / "rules" / "demo_rules.yaml"
+    run("dict", "add", DICT_A)
+    run("rules", "load", rules)
+    run("vehicle", "add", "testbed", "--kind", "testbed")
+    run("state", "set", "sc1", "--project-version", VERSION_A)
+    run("compile", sequence, "--vehicle", "sc1")
+    out = run(
+        "check",
+        sequence.with_suffix(".bin"),
+        "--vehicle",
+        "sc1",
+        "--checks",
+        "build_match,testbed_equiv,flight_rules",
+        code=EXIT_BLOCK,
+    )
+    lines = [
+        line for line in out.splitlines() if line.startswith("  ") and not line.startswith("    ")
+    ]
+    assert [line.split()[:3] for line in lines] == [
+        ["PASS", "build_match", "OK"],
+        ["BLOCK", "testbed_equiv", "NO_TESTBED_RUN"],
+        ["PASS", "flight_rules", "OK"],
+    ]

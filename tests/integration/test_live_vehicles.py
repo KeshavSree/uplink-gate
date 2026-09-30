@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,15 @@ def api() -> Iterator[httpx.Client]:
         yield client
 
 
+def put_on_build(api: httpx.Client, vehicle: str, build: str) -> None:
+    reflash(vehicle, build)
+    wait_for(
+        lambda: running(api, vehicle) == BUILDS[build]["dictionary_sha256"],
+        60,
+        f"the gate to see {vehicle} on build {build}",
+    )
+
+
 def running(api: httpx.Client, vehicle: str) -> str | None:
     summary = api.get(f"/api/vehicles/{vehicle}").json()
     dictionary = summary.get("running_dictionary")
@@ -69,25 +79,64 @@ def fleet_ready(api: httpx.Client) -> None:
         return len(vehicles) == 3 and all(v["resolution"]["ok"] for v in vehicles.values())
 
     wait_for(ready, 120, "all three vehicles to report a known build")
-    if running(api, "sc1") != BUILDS["A"]["dictionary_sha256"]:
-        reflash("sc1", "A")
-        wait_for(
-            lambda: running(api, "sc1") == BUILDS["A"]["dictionary_sha256"], 60, "sc1 on build A"
-        )
+    for vehicle, build in (("testbed", "A"), ("sc1", "A"), ("sc2", "B")):
+        if running(api, vehicle) != BUILDS[build]["dictionary_sha256"]:
+            put_on_build(api, vehicle, build)
+    assert api.get("/api/config").json()["checks"] == [
+        "build_match",
+        "testbed_equiv",
+        "flight_rules",
+    ]
 
 
-def compile_for(api: httpx.Client, vehicle: str, sequence: str = "signal_setup") -> int:
+SIGNAL_SETUP = """\
+log("run {token}")
+Ref.SG1.Settings(5, 2.5, 0.0, Ref.SignalType.SINE)
+Ref.SG1.Toggle()
+"""
+
+
+def compile_for(
+    api: httpx.Client, vehicle: str, source: str | None = None, name: str = "it"
+) -> int:
+    """Compile for a vehicle. Without `source`, a sequence no earlier test run has compiled,
+    so there is no testbed evidence for it yet."""
+    source = source or SIGNAL_SETUP.format(token=uuid.uuid4().hex)
     job = api.post(
         "/api/compile",
         params={"wait": "true"},
-        json={"vehicle_id": vehicle, "sequence_name": sequence},
+        json={"vehicle_id": vehicle, "sequence_name": name, "source": source},
     ).json()
     assert job["status"] == "done", job
     return int(job["compile"]["id"])
 
 
 def check(api: httpx.Client, compile_id: int, vehicle: str) -> dict[str, Any]:
-    return api.post("/api/check", json={"compile_id": compile_id, "vehicle_id": vehicle}).json()
+    decision = api.post("/api/check", json={"compile_id": compile_id, "vehicle_id": vehicle}).json()
+    decision["by_check"] = {c["check"]: c for c in decision["checks"]}
+    return decision
+
+
+def uplink(api: httpx.Client, compile_id: int, vehicle: str) -> httpx.Response:
+    return api.post("/api/uplink", json={"compile_id": compile_id, "vehicle_id": vehicle})
+
+
+def qualify_on_testbed(api: httpx.Client, compile_id: int) -> None:
+    """Run the bytecode on the testbed and wait for the gate to record the run."""
+    sha = next(c for c in api.get("/api/compiles").json() if c["id"] == compile_id)[
+        "bytecode_sha256"
+    ]
+    assert check(api, compile_id, "testbed")["result"] == "PASS"
+    response = uplink(api, compile_id, "testbed")
+    assert response.status_code == 200 and response.json()["ok"], response.text
+    wait_for(
+        lambda: any(
+            r["bytecode_sha256"] == sha and r["result"] == "SUCCESS"
+            for r in api.get("/api/testbed-runs").json()
+        ),
+        30,
+        "the testbed run to be recorded",
+    )
 
 
 def test_three_live_vehicles_identified_by_dictionary_content(api: httpx.Client) -> None:
@@ -107,10 +156,21 @@ def test_three_live_vehicles_identified_by_dictionary_content(api: httpx.Client)
 
 def test_compile_check_uplink_and_sequence_runs_on_a_matching_vehicle(api: httpx.Client) -> None:
     compile_id = compile_for(api, "sc1")
+
+    # Right dictionary and no rule broken, but never run on a testbed: still blocked.
+    first = check(api, compile_id, "sc1")
+    assert first["result"] == "BLOCK"
+    assert first["by_check"]["build_match"]["status"] == "PASS"
+    assert first["by_check"]["flight_rules"]["status"] == "PASS"
+    assert first["by_check"]["testbed_equiv"]["reason"] == "NO_TESTBED_RUN"
+    assert uplink(api, compile_id, "sc1").status_code == 409
+
+    qualify_on_testbed(api, compile_id)
     decision = check(api, compile_id, "sc1")
     assert decision["result"] == "PASS", decision
+    assert [c["status"] for c in decision["checks"]] == ["PASS", "PASS", "PASS"]
 
-    response = api.post("/api/uplink", json={"compile_id": compile_id, "vehicle_id": "sc1"})
+    response = uplink(api, compile_id, "sc1")
     assert response.status_code == 200, response.text
     result = response.json()
     assert result["ok"], result
@@ -126,18 +186,41 @@ def test_compile_check_uplink_and_sequence_runs_on_a_matching_vehicle(api: httpx
 
 def test_blocked_on_a_mismatched_vehicle_and_nothing_is_sent(api: httpx.Client) -> None:
     compile_id = compile_for(api, "sc1")
+    qualify_on_testbed(api, compile_id)
     decision = check(api, compile_id, "sc2")
     assert decision["result"] == "BLOCK"
-    assert decision["checks"][0]["reason"] == "DICTIONARY_MISMATCH"
+    assert decision["by_check"]["build_match"]["reason"] == "DICTIONARY_MISMATCH"
+    # The testbed run was on build A, so it is no evidence for sc2, which runs build B.
+    assert decision["by_check"]["testbed_equiv"]["reason"] == "NO_TESTBED_RUN"
+    # Read with sc2's dictionary, the command's argument bytes do not fit.
+    assert decision["by_check"]["flight_rules"]["reason"] == "BYTECODE_UNREADABLE"
 
     before = api.get("/api/vehicles/sc2").json()["events"]
-    response = api.post("/api/uplink", json={"compile_id": compile_id, "vehicle_id": "sc2"})
+    response = uplink(api, compile_id, "sc2")
     assert response.status_code == 409
     assert response.json()["refused"] is True
     time.sleep(3)
     after = api.get("/api/vehicles/sc2").json()["events"]
     new = [e for e in after if e not in before]
     assert not any("fileUplink" in e["name"] or "fpySeq" in e["name"] for e in new), new
+
+
+def test_flight_rule_violation_blocks_even_the_testbed(api: httpx.Client) -> None:
+    job = api.post(
+        "/api/compile",
+        params={"wait": "true"},
+        json={"vehicle_id": "testbed", "sequence_name": "signal_too_fast"},
+    ).json()
+    compile_id = job["compile"]["id"]
+    decision = check(api, compile_id, "testbed")
+    assert decision["result"] == "BLOCK"
+    rules = decision["by_check"]["flight_rules"]
+    assert rules["reason"] == "FLIGHT_RULE_VIOLATION"
+    assert {v["rule_id"] for v in rules["details"]["violations"]} == {
+        "sg-frequency-range",
+        "sg-retune-spacing",
+    }
+    assert uplink(api, compile_id, "testbed").status_code == 409
 
 
 def test_compiles_for_all_vehicles_run_concurrently(api: httpx.Client) -> None:
@@ -154,31 +237,33 @@ def test_compiles_for_all_vehicles_run_concurrently(api: httpx.Client) -> None:
 
 def test_live_swap_flips_pass_to_block_without_a_restart(api: httpx.Client) -> None:
     compile_id = compile_for(api, "sc1")
+    qualify_on_testbed(api, compile_id)
     assert check(api, compile_id, "sc1")["result"] == "PASS"
 
-    reflash("sc1", "B")
+    put_on_build(api, "sc1", "B")
     try:
-        wait_for(
-            lambda: running(api, "sc1") == BUILDS["B"]["dictionary_sha256"],
-            60,
-            "the gate to see sc1 on build B",
-        )
         decision = check(api, compile_id, "sc1")
         assert decision["result"] == "BLOCK"
-        assert decision["checks"][0]["reason"] == "DICTIONARY_MISMATCH"
-        response = api.post("/api/uplink", json={"compile_id": compile_id, "vehicle_id": "sc1"})
-        assert response.status_code == 409
+        assert decision["by_check"]["build_match"]["reason"] == "DICTIONARY_MISMATCH"
+        assert uplink(api, compile_id, "sc1").status_code == 409
 
-        # Bytecode compiled for the new build passes and runs.
+        # Recompiled for the new build, the dictionary matches, but the testbed still runs
+        # the old build, so there is no way to get testbed evidence for it yet.
         new_compile = compile_for(api, "sc1")
-        assert check(api, new_compile, "sc1")["result"] == "PASS"
-        uplink = api.post("/api/uplink", json={"compile_id": new_compile, "vehicle_id": "sc1"})
-        assert uplink.status_code == 200 and uplink.json()["ok"], uplink.text
-    finally:
-        reflash("sc1", "A")
-        wait_for(
-            lambda: running(api, "sc1") == BUILDS["A"]["dictionary_sha256"],
-            60,
-            "sc1 back on build A",
+        decision = check(api, new_compile, "sc1")
+        assert decision["by_check"]["build_match"]["status"] == "PASS"
+        assert decision["by_check"]["testbed_equiv"]["reason"] == "NO_TESTBED_RUN"
+        assert check(api, new_compile, "testbed")["by_check"]["build_match"]["reason"] == (
+            "DICTIONARY_MISMATCH"
         )
+
+        # Bring the testbed to the same build, run there, and the gate opens.
+        put_on_build(api, "testbed", "B")
+        qualify_on_testbed(api, new_compile)
+        assert check(api, new_compile, "sc1")["result"] == "PASS"
+        response = uplink(api, new_compile, "sc1")
+        assert response.status_code == 200 and response.json()["ok"], response.text
+    finally:
+        put_on_build(api, "testbed", "A")
+        put_on_build(api, "sc1", "A")
     assert check(api, compile_id, "sc1")["result"] == "PASS"

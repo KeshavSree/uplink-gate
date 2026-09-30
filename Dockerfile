@@ -12,6 +12,7 @@ COPY gate ./gate
 COPY cli ./cli
 COPY api ./api
 COPY sequences ./sequences
+COPY rules ./rules
 RUN uv sync --frozen --no-dev --extra server
 
 ENV PATH="/app/.venv/bin:${PATH}" \
