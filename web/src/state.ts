@@ -32,10 +32,10 @@ export const STATE_LABEL: Record<GateState, string> = {
 };
 
 export const STATE_COLOR: Record<GateState, string> = {
-  open: "#4be3a0",
-  blocked: "#ff6b70",
-  unknown: "#f4b740",
-  idle: "#8fa3d9",
+  open: "#3ecf6e",
+  blocked: "#f0544c",
+  unknown: "#e0a53a",
+  idle: "#7c8590",
 };
 
 export function shortHash(hash: string | null | undefined, length = 12): string {

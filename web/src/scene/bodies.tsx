@@ -108,7 +108,7 @@ export function Earth({ speed, children }: { speed: number; children?: ReactNode
   const spin = useRef<THREE.Group>(null);
   const uniforms = useMemo(() => ({ sunDirection: { value: SUN_DIRECTION } }), []);
   useFrame((_, delta) => {
-    if (spin.current) spin.current.rotation.y += delta * 0.03 * speed;
+    if (spin.current) spin.current.rotation.y += delta * 0.02 * speed;
   });
   return (
     <group>

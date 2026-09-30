@@ -12,6 +12,7 @@ import logging
 import multiprocessing
 import os
 import re
+import uuid
 from collections.abc import AsyncIterator
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager, suppress
@@ -309,7 +310,9 @@ class GateService:
             dictionary_hash=dictionary_hash,
         )
         self.jobs[job.id] = job
-        work_dir = self.config.bytecode_store / f"job-{job.id:06d}"
+        # Job numbers restart with the service, so the directory name must not rely on them:
+        # reusing one would overwrite bytecode that an older compile record points to.
+        work_dir = self.config.bytecode_store / f"job-{uuid.uuid4().hex[:16]}"
         work_dir.mkdir(parents=True, exist_ok=True)
         sequence_path = work_dir / f"{sequence_name}.fpy"
         sequence_path.write_text(text, encoding="utf-8")

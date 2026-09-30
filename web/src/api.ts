@@ -139,8 +139,13 @@ export const api = {
   compiles: () => request<Compile[]>("/compiles?limit=30"),
   decisions: () => request<Decision[]>("/decisions?limit=40"),
   config: () => request<GateConfig>("/config"),
-  compileAll: (sequenceName: string) =>
-    request<CompileJob[]>("/compile/all", post({ sequence_name: sequenceName })),
+  /** One compile job per vehicle, each with the dictionary that vehicle runs. */
+  compileAll: (name: string, source: string) =>
+    request<CompileJob[]>("/compile/all", post({ sequence_name: name, source })),
+  /** One compile job, with the dictionary the vehicle runs. */
+  compile: (vehicleId: string, name: string, source: string) =>
+    request<CompileJob>("/compile", post({ vehicle_id: vehicleId, sequence_name: name, source })),
+  job: (id: number) => request<CompileJob>(`/compile/jobs/${id}`),
   check: (compileId: number, vehicleId: string) =>
     request<Decision>("/check", post({ compile_id: compileId, vehicle_id: vehicleId })),
   uplink: (compileId: number, vehicleId: string) =>

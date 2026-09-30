@@ -1,5 +1,6 @@
 // Live state of the gate service: polled REST data, refreshed early whenever the
-// WebSocket reports that something changed.
+// WebSocket reports that something changed. Compile jobs are also polled directly, so the
+// UI shows their result even when the WebSocket is not connected.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -10,14 +11,19 @@ import {
   type GateConfig,
   type GateEvent,
   type Sequence,
-  type UplinkResponse,
   type Vehicle,
   type VehicleDetail,
 } from "./api";
+import { reasonLine } from "./state";
 
 export interface Beam {
   kind: "sent" | "refused";
   until: number;
+}
+
+export interface Outcome {
+  tone: "ok" | "blocked" | "failed" | "working";
+  text: string;
 }
 
 export interface Gate {
@@ -32,10 +38,11 @@ export interface Gate {
   connected: boolean;
   error: string | null;
   busy: Record<string, boolean>;
-  notice: Record<string, string>;
-  compileAll: (sequenceName: string) => Promise<void>;
-  check: (compileId: number, vehicleId: string) => Promise<void>;
-  uplink: (compileId: number, vehicleId: string) => Promise<void>;
+  outcome: Record<string, Outcome>;
+  /** Compile `source` for each of `targets`, at the same time, each with its own dictionary. */
+  compile: (name: string, source: string, targets: string[]) => Promise<void>;
+  /** Run the gate; if it passes, send the bytecode and run it. */
+  checkAndUplink: (compileId: number, vehicleId: string) => Promise<void>;
 }
 
 const REFRESH_ON = new Set([
@@ -49,6 +56,12 @@ const REFRESH_ON = new Set([
   "testbed.run",
 ]);
 
+const FINISHED = new Set(["done", "failed"]);
+
+export function actionKey(compileId: number, vehicleId: string): string {
+  return `send-${compileId}-${vehicleId}`;
+}
+
 export function useGate(selectedId: string | null): Gate {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [detail, setDetail] = useState<VehicleDetail | null>(null);
@@ -61,7 +74,7 @@ export function useGate(selectedId: string | null): Gate {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [notice, setNotice] = useState<Record<string, string>>({});
+  const [outcome, setOutcome] = useState<Record<string, Outcome>>({});
   const selected = useRef(selectedId);
   selected.current = selectedId;
 
@@ -74,28 +87,29 @@ export function useGate(selectedId: string | null): Gate {
       if (selected.current) setDetail(await api.vehicle(selected.current));
       setError(null);
     } catch (problem) {
-      setError(`Cannot reach the gate service: ${(problem as Error).message}`);
+      setError(`Gate service unreachable: ${(problem as Error).message}`);
     }
   }, []);
 
-  // Static data, once.
   useEffect(() => {
     api.sequences().then(setSequences).catch(() => undefined);
     api.config().then(setConfig).catch(() => undefined);
   }, []);
 
-  // Poll, so ages stay current even when nothing happens.
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
     return () => window.clearInterval(timer);
   }, [refresh, selectedId]);
 
+  const upsertJob = useCallback((job: CompileJob) => {
+    setJobs((current) => [job, ...current.filter((j) => j.id !== job.id)].slice(0, 12));
+  }, []);
+
   const beam = useCallback((vehicleId: string, kind: Beam["kind"]) => {
     setBeams((current) => ({ ...current, [vehicleId]: { kind, until: Date.now() + 4000 } }));
   }, []);
 
-  // Event stream, reconnecting.
   useEffect(() => {
     let socket: WebSocket | null = null;
     let retry: number | undefined;
@@ -112,13 +126,8 @@ export function useGate(selectedId: string | null): Gate {
       };
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as GateEvent;
-        if (event.type.startsWith("compile.")) {
-          const job = event.job as CompileJob;
-          setJobs((current) => [job, ...current.filter((j) => j.id !== job.id)].slice(0, 9));
-        }
-        if (event.type === "uplink.finished") {
-          beam(event.vehicle_id as string, event.ok ? "sent" : "refused");
-        }
+        if (event.type.startsWith("compile.")) upsertJob(event.job as CompileJob);
+        if (event.type === "uplink.finished") beam(event.vehicle_id as string, event.ok ? "sent" : "refused");
         if (event.type === "uplink.refused") beam(event.vehicle_id as string, "refused");
         if (REFRESH_ON.has(event.type) && pending === undefined) {
           pending = window.setTimeout(() => {
@@ -135,56 +144,86 @@ export function useGate(selectedId: string | null): Gate {
       window.clearTimeout(pending);
       socket?.close();
     };
-  }, [refresh, beam]);
+  }, [refresh, beam, upsertJob]);
 
-  const run = useCallback(
-    async (key: string, action: () => Promise<string | void>) => {
-      setBusy((current) => ({ ...current, [key]: true }));
+  /** Follow a job until it finishes, whether or not the WebSocket reports it. */
+  const follow = useCallback(
+    async (job: CompileJob) => {
+      let current = job;
+      upsertJob(current);
+      for (let attempt = 0; attempt < 240 && !FINISHED.has(current.status); attempt++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        current = await api.job(current.id);
+        upsertJob(current);
+      }
+      return current;
+    },
+    [upsertJob],
+  );
+
+  const compile = useCallback(
+    async (name: string, source: string, targets: string[]) => {
+      if (targets.length === 0) return;
+      setBusy((b) => ({ ...b, compile: true }));
+      setOutcome((o) => ({ ...o, compile: { tone: "working", text: "Compiling" } }));
       try {
-        const message = await action();
-        setNotice((current) => ({ ...current, [key]: message ?? "" }));
+        const everyone = vehicles.length > 0 && vehicles.every((v) => targets.includes(v.id));
+        const started = everyone
+          ? await api.compileAll(name, source)
+          : await Promise.all(targets.map((id) => api.compile(id, name, source)));
+        const finished = await Promise.all(started.map(follow));
+        const failed = finished.filter((j) => j.status === "failed");
+        setOutcome((o) => ({
+          ...o,
+          compile:
+            failed.length === 0
+              ? { tone: "ok", text: `Compiled for ${finished.map((j) => j.vehicle_id).join(", ")}` }
+              : { tone: "failed", text: failed.map((j) => `${j.vehicle_id}: ${j.error}`).join("; ") },
+        }));
       } catch (problem) {
-        setNotice((current) => ({ ...current, [key]: (problem as Error).message }));
+        setOutcome((o) => ({ ...o, compile: { tone: "failed", text: (problem as Error).message } }));
       } finally {
-        setBusy((current) => ({ ...current, [key]: false }));
+        setBusy((b) => ({ ...b, compile: false }));
         void refresh();
       }
     },
-    [refresh],
+    [follow, refresh, vehicles],
   );
 
-  const compileAll = useCallback(
-    (sequenceName: string) =>
-      run("compile", async () => {
-        const started = await api.compileAll(sequenceName);
-        setJobs((current) => {
-          const known = new Set(current.map((j) => j.id));
-          return [...started.filter((j) => !known.has(j.id)), ...current].slice(0, 9);
-        });
-      }),
-    [run],
-  );
-
-  const check = useCallback(
-    (compileId: number, vehicleId: string) =>
-      run(`check-${compileId}-${vehicleId}`, async () => {
-        await api.check(compileId, vehicleId);
-      }),
-    [run],
-  );
-
-  const uplink = useCallback(
-    (compileId: number, vehicleId: string) =>
-      run(`uplink-${compileId}-${vehicleId}`, async () => {
-        const result: UplinkResponse = await api.uplink(compileId, vehicleId);
-        if (result.refused) return `Refused: ${result.message}`;
-        return result.ok ? `Ran on ${vehicleId}: ${result.detail}` : `Failed: ${result.detail}`;
-      }),
-    [run],
+  const checkAndUplink = useCallback(
+    async (compileId: number, vehicleId: string) => {
+      const key = actionKey(compileId, vehicleId);
+      const report = (value: Outcome) => setOutcome((o) => ({ ...o, [key]: value }));
+      setBusy((b) => ({ ...b, [key]: true }));
+      try {
+        report({ tone: "working", text: "Checking" });
+        const decision = await api.check(compileId, vehicleId);
+        if (decision.result !== "PASS") {
+          const first = decision.checks.find((c) => c.status === "BLOCK");
+          report({
+            tone: "blocked",
+            text: `Blocked, nothing sent. ${reasonLine(decision)}${first ? `: ${first.message}` : ""}`,
+          });
+          beam(vehicleId, "refused");
+          return;
+        }
+        report({ tone: "working", text: "Check passed. Uplinking and running" });
+        const result = await api.uplink(compileId, vehicleId);
+        if (result.refused) report({ tone: "blocked", text: `Refused at re-check, nothing sent. ${result.message}` });
+        else if (result.ok) report({ tone: "ok", text: `Uplinked and ran. ${result.detail}` });
+        else report({ tone: "failed", text: `Uplinked, but it did not complete. ${result.detail}` });
+      } catch (problem) {
+        report({ tone: "failed", text: (problem as Error).message });
+      } finally {
+        setBusy((b) => ({ ...b, [key]: false }));
+        void refresh();
+      }
+    },
+    [beam, refresh],
   );
 
   return {
     vehicles, detail, compiles, decisions, sequences, jobs, config, beams,
-    connected, error, busy, notice, compileAll, check, uplink,
+    connected, error, busy, outcome, compile, checkAndUplink,
   };
 }

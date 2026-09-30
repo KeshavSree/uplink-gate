@@ -219,3 +219,26 @@ def test_routine_version_poll_events_are_recognised() -> None:
     assert _is_routine("CdhCore.cmdDisp.OpCodeCompleted")
     assert not _is_routine("CdhCore.cmdDisp.OpCodeError")
     assert not _is_routine("Ref.fpySeq.SequenceDone")
+
+
+def test_a_restarted_service_does_not_overwrite_earlier_bytecode(
+    config: GateConfig, seeds: Path
+) -> None:
+    settings = Settings(
+        seed_dictionaries=seeds,
+        sequences_dir=SEQUENCES,
+        web_dir=None,
+        compile_workers=1,
+        start_ingest=False,
+    )
+    paths = []
+    for _ in range(2):  # two service lifetimes, each starting its job numbers at 1
+        with TestClient(create_app(config, settings)) as client:
+            job = client.post(
+                "/api/compile?wait=true",
+                json={"dictionary": HASH_A[:10], "sequence_name": "signal_setup"},
+            ).json()
+            assert job["id"] == 1
+            paths.append(job["compile"]["bytecode_path"])
+    assert paths[0] != paths[1]
+    assert Path(paths[0]).is_file() and Path(paths[1]).is_file()

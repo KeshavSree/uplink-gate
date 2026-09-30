@@ -1,8 +1,19 @@
-// The console for the selected vehicle: what it is running, and the gate for each bytecode.
+// The selected vehicle: what it runs, and the gate for each bytecode.
 
 import type { CheckResult, Compile, Decision, Dictionary, VehicleDetail } from "../api";
-import { ageText, clockTime, decisionFor, distinctBytecode, gateState, isCurrent, sequenceName, shortHash, STATE_LABEL } from "../state";
-import type { Gate } from "../useGate";
+import {
+  ageText,
+  clockTime,
+  decisionFor,
+  distinctBytecode,
+  gateState,
+  isCurrent,
+  sequenceName,
+  shortHash,
+  STATE_LABEL,
+} from "../state";
+import { actionKey, type Gate } from "../useGate";
+import { Panel } from "./Panel";
 
 const CHECK_TITLE: Record<string, string> = {
   build_match: "Build match",
@@ -11,87 +22,70 @@ const CHECK_TITLE: Record<string, string> = {
   simulation: "Simulation",
 };
 
-const STATUS_WORD: Record<CheckResult["status"], string> = {
-  PASS: "Pass",
-  BLOCK: "Block",
-  SKIPPED: "Skipped",
-};
-
-function CheckRow({ check }: { check: CheckResult }) {
-  return (
-    <li className={`check check-${check.status.toLowerCase()}`}>
-      <span className="check-status">{STATUS_WORD[check.status]}</span>
-      <span className="check-name">{CHECK_TITLE[check.check] ?? check.check}</span>
-      <span className="check-message">{check.message}</span>
-    </li>
-  );
-}
-
-function DecisionView({ decision, current }: { decision: Decision; current: boolean }) {
+function Checks({ decision, current }: { decision: Decision; current: boolean }) {
   if (!current) {
     return (
-      <p className="decision decision-stale">
-        Last checked at {clockTime(decision.decided_at)}, when this vehicle was running{" "}
-        <code>{shortHash(decision.running_dictionary_hash, 8)}</code>. It has changed build since, so check again.
+      <p className="note">
+        Last checked {clockTime(decision.decided_at)} against <span className="mono">{shortHash(decision.running_dictionary_hash, 8)}</span>.
+        The vehicle has changed build since.
       </p>
     );
   }
   return (
-    <div className={`decision decision-${decision.result.toLowerCase()}`}>
-      <p className="decision-head">
-        <strong>{decision.result === "PASS" ? "Pass" : "Block"}</strong>
-        <span>checked at {clockTime(decision.decided_at)}</span>
-      </p>
-      <ul className="checks">
-        {decision.checks.map((check) => (
-          <CheckRow key={check.check} check={check} />
+    <table className="checks">
+      <tbody>
+        {decision.checks.map((check: CheckResult) => (
+          <tr key={check.check} className={`check-${check.status.toLowerCase()}`}>
+            <td className="check-status">{check.status === "SKIPPED" ? "SKIP" : check.status}</td>
+            <td className="check-name">{CHECK_TITLE[check.check] ?? check.check}</td>
+            <td className="check-message">{check.message}</td>
+          </tr>
         ))}
-      </ul>
-    </div>
+      </tbody>
+    </table>
   );
 }
 
-interface BytecodeRowProps {
+function BytecodeRow({
+  compile,
+  compiledFor,
+  vehicle,
+  dictionaries,
+  gate,
+}: {
   compile: Compile;
   compiledFor: string[];
   vehicle: VehicleDetail;
   dictionaries: Record<string, Dictionary>;
   gate: Gate;
-}
-
-function BytecodeRow({ compile, compiledFor, vehicle, dictionaries, gate }: BytecodeRowProps) {
+}) {
   const decision = decisionFor(gate.decisions, vehicle.id, compile.bytecode_sha256);
+  const key = actionKey(compile.id, vehicle.id);
+  const outcome = gate.outcome[key];
   const dictionary = dictionaries[compile.dictionary_hash];
-  const checkKey = `check-${compile.id}-${vehicle.id}`;
-  const uplinkKey = `uplink-${compile.id}-${vehicle.id}`;
-  const notice = gate.notice[uplinkKey] || gate.notice[checkKey];
   return (
     <li className="bytecode">
       <div className="bytecode-head">
         <div>
-          <p className="bytecode-name">{sequenceName(compile.sequence_path)}</p>
-          <p className="bytecode-meta">
-            compiled for {compiledFor.length > 0 ? compiledFor.join(" and ") : "a chosen dictionary"} with{" "}
-            <code title={compile.dictionary_hash}>{shortHash(compile.dictionary_hash, 8)}</code>
-            {dictionary ? ` (${dictionary.project_version})` : ""}
+          <span className="bytecode-name">{sequenceName(compile.sequence_path)}</span>
+          <span className="mono dim"> {shortHash(compile.bytecode_sha256, 8)}</span>
+          <p className="dim">
+            for {compiledFor.join(", ") || "chosen dictionary"} with{" "}
+            <span className="mono">{shortHash(compile.dictionary_hash, 8)}</span>
+            {dictionary ? ` ${dictionary.project_version}` : ""}
           </p>
         </div>
-        <div className="bytecode-actions">
-          <button type="button" disabled={gate.busy[checkKey]} onClick={() => void gate.check(compile.id, vehicle.id)}>
-            {gate.busy[checkKey] ? "Checking" : "Check"}
-          </button>
-          <button
-            type="button"
-            className="primary"
-            disabled={gate.busy[uplinkKey]}
-            onClick={() => void gate.uplink(compile.id, vehicle.id)}
-          >
-            {gate.busy[uplinkKey] ? "Uplinking" : "Uplink"}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="primary"
+          disabled={gate.busy[key]}
+          onClick={() => void gate.checkAndUplink(compile.id, vehicle.id)}
+        >
+          {gate.busy[key] ? "Working" : "Check and uplink"}
+        </button>
       </div>
-      {decision ? <DecisionView decision={decision} current={isCurrent(decision, vehicle)} /> : null}
-      {notice ? <p className="notice">{notice}</p> : null}
+      {outcome && outcome.tone !== "ok" ? <p className={`status tone-${outcome.tone}`}>{outcome.text}</p> : null}
+      {decision ? <Checks decision={decision} current={isCurrent(decision, vehicle)} /> : null}
     </li>
   );
 }
@@ -99,58 +93,61 @@ function BytecodeRow({ compile, compiledFor, vehicle, dictionaries, gate }: Byte
 export function VehicleConsole({ vehicle, gate }: { vehicle: VehicleDetail | null; gate: Gate }) {
   if (!vehicle) {
     return (
-      <aside className="console">
-        <p className="console-empty">Select a vehicle in the orbit view to see what it is running.</p>
-      </aside>
+      <Panel title="Vehicle" className="vehicle">
+        <p className="note">Select a vehicle in the fleet list or the orbit view.</p>
+      </Panel>
     );
   }
   const state = gateState(vehicle);
   const dictionaries = Object.fromEntries(
-    [vehicle.running_dictionary, ...gate.vehicles.map((v) => v.running_dictionary)]
+    gate.vehicles
+      .map((v) => v.running_dictionary)
       .filter((d): d is Dictionary => d !== null)
       .map((d) => [d.hash, d]),
   );
-  const freshness = vehicle.reading_age_s === null ? 0 : Math.max(0, 1 - vehicle.reading_age_s / vehicle.max_state_age_s);
+  const freshness =
+    vehicle.reading_age_s === null ? 0 : Math.max(0, 1 - vehicle.reading_age_s / vehicle.max_state_age_s);
   return (
-    <aside className="console" aria-label={`Vehicle ${vehicle.name}`}>
-      <header className="console-header">
-        <h2>{vehicle.name}</h2>
-        <p>{vehicle.kind === "testbed" ? "Testbed" : "Spacecraft"}</p>
-        <p className={`state state-${state}`}>{STATE_LABEL[state]}</p>
-      </header>
+    <Panel
+      title={`Vehicle ${vehicle.name}`}
+      className="vehicle"
+      aside={<span className={`tag-state tone-${state}`}>{STATE_LABEL[state]}</span>}
+    >
+      <dl className="readout">
+        <dt>Kind</dt>
+        <dd>{vehicle.kind === "testbed" ? "Testbed" : "Spacecraft"}</dd>
+        <dt>Project version</dt>
+        <dd className="mono strong">{vehicle.state?.observed_project_version ?? "not reported"}</dd>
+        <dt>Dictionary</dt>
+        <dd className="mono" title={vehicle.running_dictionary?.hash}>
+          {shortHash(vehicle.running_dictionary?.hash, 16)}
+          <span className="dim">
+            {vehicle.resolution.identified_by === "content" ? "  by content" : ""}
+            {vehicle.resolution.identified_by === "label" ? "  by label only" : ""}
+          </span>
+        </dd>
+        <dt>Identity read</dt>
+        <dd>
+          <span className="mono">{ageText(vehicle.reading_age_s)}</span>
+          <span className="meter" title={`Stale after ${vehicle.max_state_age_s} s`}>
+            <span style={{ width: `${freshness * 100}%` }} />
+          </span>
+        </dd>
+        <dt>Link</dt>
+        <dd className={vehicle.link?.connected ? "tone-pass" : "tone-warn"}>
+          {vehicle.link?.connected ? `GDS ${vehicle.gds_endpoint}` : (vehicle.link?.error ?? "no link")}
+        </dd>
+      </dl>
+      {!vehicle.resolution.ok ? <p className="status tone-blocked">{vehicle.resolution.message}</p> : null}
 
-      <section>
-        <h3>Running build</h3>
-        <dl className="facts">
-          <dt>Project version</dt>
-          <dd className="version">{vehicle.state?.observed_project_version ?? "not reported"}</dd>
-          <dt>Dictionary hash</dt>
-          <dd>
-            <code title={vehicle.running_dictionary?.hash}>{shortHash(vehicle.running_dictionary?.hash)}</code>
-            {vehicle.resolution.identified_by === "content" ? " matched by content" : null}
-            {vehicle.resolution.identified_by === "label" ? " matched by version label only" : null}
-          </dd>
-          <dt>Telemetry</dt>
-          <dd>
-            reported {ageText(vehicle.reading_age_s)}
-            <span className="freshness" role="img" aria-label={`Reading is ${ageText(vehicle.reading_age_s)}; stale after ${vehicle.max_state_age_s} seconds`}>
-              <span style={{ width: `${freshness * 100}%` }} />
-            </span>
-          </dd>
-        </dl>
-        {!vehicle.resolution.ok ? <p className="problem">{vehicle.resolution.message}</p> : null}
-        {vehicle.link && !vehicle.link.connected ? (
-          <p className="problem">No link to this vehicle. {vehicle.link.error}</p>
-        ) : null}
-      </section>
-
-      <section>
-        <h3>Bytecode</h3>
-        {gate.compiles.length === 0 ? (
-          <p className="hint">Nothing compiled yet. Use “Compile for all vehicles” to make bytecode for each one.</p>
-        ) : (
-          <ul className="bytecodes">
-            {distinctBytecode(gate.compiles).slice(0, 5).map(({ compile, compiledFor }) => (
+      <h3 className="subhead">Bytecode</h3>
+      {gate.compiles.length === 0 ? (
+        <p className="note">Nothing compiled yet. Compile a sequence in the Sequence panel.</p>
+      ) : (
+        <ul className="bytecodes">
+          {distinctBytecode(gate.compiles)
+            .slice(0, 5)
+            .map(({ compile, compiledFor }) => (
               <BytecodeRow
                 key={compile.bytecode_sha256}
                 compile={compile}
@@ -160,25 +157,8 @@ export function VehicleConsole({ vehicle, gate }: { vehicle: VehicleDetail | nul
                 gate={gate}
               />
             ))}
-          </ul>
-        )}
-      </section>
-
-      <section>
-        <h3>Flight software events</h3>
-        {vehicle.events.length === 0 ? (
-          <p className="hint">No events received yet.</p>
-        ) : (
-          <ol className="events">
-            {vehicle.events.slice(-8).reverse().map((event, index) => (
-              <li key={`${event.received_at}-${index}`} className={`event event-${event.severity.toLowerCase()}`}>
-                <time>{clockTime(event.received_at)}</time>
-                <span>{event.message}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-    </aside>
+        </ul>
+      )}
+    </Panel>
   );
 }

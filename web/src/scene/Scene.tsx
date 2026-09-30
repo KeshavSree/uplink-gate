@@ -14,16 +14,19 @@ import type { Beam } from "../useGate";
 import { Earth, Moon, SUN_DIRECTION } from "./bodies";
 
 const DEG = Math.PI / 180;
+/** Scene seconds per real second. Low, so the motion stays in the background. */
+const TIME_SCALE = 0.35;
 const MOON_DISTANCE = 9.5;
 const MOON_RADIUS = 0.42;
 
 const MOON_ORBIT: Elements = {
   a: MOON_DISTANCE, e: 0.055, i: 5.1 * DEG, raan: 40 * DEG, argp: 0, m0: 2.4, period: 420,
 };
-// A transfer-like ellipse around Earth and a low orbit around the Moon.
+// The first spacecraft around Earth is in low Earth orbit: nearly circular, about 0.08 Earth
+// radii (roughly 500 km) up, at the ISS's 51.6 degree inclination. The second is higher.
 const EARTH_ORBITS: Elements[] = [
-  { a: 2.9, e: 0.36, i: 28.5 * DEG, raan: 200 * DEG, argp: 300 * DEG, m0: 0.6, period: 46 },
-  { a: 4.1, e: 0.22, i: 51.0 * DEG, raan: 80 * DEG, argp: 120 * DEG, m0: 2.0, period: 71 },
+  { a: 1.08, e: 0.001, i: 51.6 * DEG, raan: 200 * DEG, argp: 0, m0: 0.6, period: 40 },
+  { a: 2.9, e: 0.36, i: 28.5 * DEG, raan: 80 * DEG, argp: 300 * DEG, m0: 2.0, period: 70 },
 ];
 const LUNAR_ORBITS: Elements[] = [
   { a: 0.95, e: 0.12, i: 62 * DEG, raan: 15 * DEG, argp: 40 * DEG, m0: 1.0, period: 27 },
@@ -85,18 +88,18 @@ function Marker({ vehicle, selected, onSelect, shape }: MarkerProps) {
         onPointerOver={() => (document.body.style.cursor = "pointer")}
         onPointerOut={() => (document.body.style.cursor = "")}
       >
-        <sphereGeometry args={[0.34, 12, 12]} />
+        <sphereGeometry args={[0.22, 12, 12]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh rotation={[0.4, 0.6, 0]}>
-        {shape === "craft" ? <octahedronGeometry args={[0.1, 0]} /> : <coneGeometry args={[0.07, 0.2, 4]} />}
+        {shape === "craft" ? <octahedronGeometry args={[0.07, 0]} /> : <coneGeometry args={[0.07, 0.2, 4]} />}
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.6} />
       </mesh>
       <mesh ref={halo}>
-        <ringGeometry args={selected ? [0.2, 0.235, 48] : [0.17, 0.185, 48]} />
+        <ringGeometry args={selected ? [0.14, 0.16, 48] : [0.115, 0.127, 48]} />
         <meshBasicMaterial color={color} transparent opacity={selected ? 0.95 : 0.55} side={THREE.DoubleSide} />
       </mesh>
-      <Html position={[0.3, 0.16, 0]} zIndexRange={[5, 0]} style={{ pointerEvents: "none" }}>
+      <Html position={[0.2, 0.12, 0]} zIndexRange={[5, 0]} style={{ pointerEvents: "none" }}>
         <div className={`tag tag-${state}${selected ? " tag-selected" : ""}`}>
           <strong>{vehicle.name}</strong>
           <span>{vehicle.state?.observed_project_version ?? "no telemetry"}</span>
@@ -165,7 +168,7 @@ function Fleet({ vehicles, selectedId, onSelect, positions, speed }: FleetProps)
         ))}
       </Earth>
 
-      <OrbitLine orbit={MOON_ORBIT} color="#4a5896" selected={false} />
+      <OrbitLine orbit={MOON_ORBIT} color="#3a3e45" selected={false} />
       {aroundEarth.map((vehicle) => (
         <group key={vehicle.id}>
           <OrbitLine orbit={orbitOf(vehicle)} color={STATE_COLOR[gateState(vehicle)]} selected={vehicle.id === selectedId} />
@@ -199,7 +202,7 @@ function UplinkBeam({ target, beam, positions, from }: { target: string; beam: B
     return g;
   }, []);
   const material = useMemo(
-    () => new THREE.LineBasicMaterial({ color: beam.kind === "sent" ? "#4be3a0" : "#ff6b70", transparent: true }),
+    () => new THREE.LineBasicMaterial({ color: beam.kind === "sent" ? "#3ecf6e" : "#f0544c", transparent: true }),
     [beam.kind],
   );
   const object = useMemo(() => new THREE.Line(geometry, material), [geometry, material]);
@@ -245,12 +248,12 @@ export function Scene({ vehicles, selectedId, onSelect, beams }: SceneProps) {
   );
   const ground = vehicles.find((v) => v.kind === "testbed")?.id ?? null;
   return (
-    <Canvas camera={{ position: [6, 5, 12.5], fov: 40 }} dpr={[1, 2]}>
-      <color attach="background" args={["#0b1130"]} />
+    <Canvas camera={{ position: [5, 4.2, 10.5], fov: 40 }} dpr={[1, 2]}>
+      <color attach="background" args={["#0a0b0c"]} />
       <ambientLight intensity={0.5} />
       <directionalLight position={SUN_DIRECTION.clone().multiplyScalar(30)} intensity={2.4} />
-      <Stars radius={90} depth={40} count={2600} factor={3.2} saturation={0.4} fade speed={reducedMotion ? 0 : 0.4} />
-      <Fleet vehicles={vehicles} selectedId={selectedId} onSelect={onSelect} positions={positions} speed={reducedMotion ? 0.15 : 1} />
+      <Stars radius={90} depth={40} count={1800} factor={2.6} saturation={0} fade speed={0} />
+      <Fleet vehicles={vehicles} selectedId={selectedId} onSelect={onSelect} positions={positions} speed={reducedMotion ? 0.06 : TIME_SCALE} />
       {Object.entries(beams).map(([vehicleId, beam]) => (
         <UplinkBeam key={`${vehicleId}-${beam.until}`} target={vehicleId} beam={beam} positions={positions} from={ground} />
       ))}
