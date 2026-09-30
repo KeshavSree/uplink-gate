@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gate.config import GateConfig
 from gate.results import CheckResult, CheckStatus, Reason
+from gate.simulation import Sample
 
 if TYPE_CHECKING:
     from gate.registry import Compile, Registry
@@ -30,6 +31,8 @@ class CheckContext:
     resolution: Resolution | None = None
     #: Set by build_match: the compile record that matches the running dictionary, if any.
     matching_compile: Compile | None = None
+    #: Latest telemetry of the vehicle by channel name, when a live link provides it.
+    telemetry: Mapping[str, Sample] | None = None
     scratch: dict[str, Any] = field(default_factory=dict)
 
     @property

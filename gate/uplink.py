@@ -107,7 +107,13 @@ class UplinkAdapter:
                 f"{self.identity_timeout_s:.0f} s of being asked",
             )
 
-        recheck = evaluate(self.registry, bytecode_path, vehicle_id, config=self.config)
+        recheck = evaluate(
+            self.registry,
+            bytecode_path,
+            vehicle_id,
+            config=self.config,
+            telemetry=self.comms.latest_channels(vehicle_id),
+        )
         assert recheck.id is not None
         if not recheck.passed:
             first = recheck.blocking[0]

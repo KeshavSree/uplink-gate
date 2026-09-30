@@ -1,0 +1,26 @@
+# Simulation model for the demo Ref deployment. Format and limits: gate/simulation.py.
+#
+# It models one thing: whether signal generator 1 is running. SignalGen has no telemetry
+# channel that says so directly, but it only sends Ref.SG1.Output while it runs, so a
+# recent Output reading means it is running.
+
+simulation:
+  state:
+    sg1_running:
+      initial: {channel_active: "Ref.SG1.Output", within_seconds: 4}
+    sg1_type:
+      initial: {channel: "Ref.SG1.Type"}
+
+  effects:
+    - command: "Ref.SG1.Toggle"
+      toggle: sg1_running
+    - command: "Ref.SG1.Settings"
+      set: {sg1_type: "$SigType"}
+
+  constraints:
+    - id: sg1-settings-only-while-stopped
+      before: "Ref.SG1.Settings"
+      require: {sg1_running: false}
+      description: >
+        Changing the settings resets the signal history. Do it only while the generator is
+        stopped, so a running measurement is never cut in half.

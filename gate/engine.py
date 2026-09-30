@@ -6,7 +6,7 @@ result separately. The decision is BLOCK if any check blocked.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -15,18 +15,21 @@ from gate.config import GateConfig
 from gate.dictionary import sha256_file
 from gate.registry import Registry, utcnow
 from gate.results import CheckResult, GateDecision, Reason, Result
+from gate.simulation import Sample
 
 
 def available_checks() -> dict[str, Check]:
     """All checks by name. Imported lazily so the core stays importable without extras."""
     from gate.checks.build_match import build_match
     from gate.checks.flight_rules import flight_rules
+    from gate.checks.simulation import simulation
     from gate.checks.testbed_equiv import testbed_equiv
 
     return {
         "build_match": build_match,
         "testbed_equiv": testbed_equiv,
         "flight_rules": flight_rules,
+        "simulation": simulation,
     }
 
 
@@ -39,10 +42,12 @@ def evaluate(
     checks: Sequence[str] | None = None,
     now: datetime | None = None,
     record: bool = True,
+    telemetry: Mapping[str, Sample] | None = None,
 ) -> GateDecision:
     """Decide PASS or BLOCK for uplinking `bytecode_path` to `vehicle_id`.
 
-    `record=False` returns the decision without storing it in the registry.
+    `record=False` returns the decision without storing it in the registry. `telemetry` is
+    the vehicle's latest channel values, which only the simulation check uses.
     """
     config = config or registry.config
     now = now or utcnow()
@@ -60,6 +65,7 @@ def evaluate(
         bytecode_path=bytecode_path,
         bytecode_sha256=sha256_file(bytecode_path),
         now=now,
+        telemetry=telemetry,
     )
 
     results: list[CheckResult] = []

@@ -16,7 +16,7 @@ import select
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,6 +25,7 @@ from typing import Any, Protocol
 from gate.config import GateConfig
 from gate.registry import Dictionary, Registry, utcnow
 from gate.resolve import resolve_running_dictionary
+from gate.simulation import Sample
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ class VehicleComms(Protocol):
     def uplink_file(self, vehicle_id: str, local_path: Path, remote_path: str) -> None: ...
 
     def send_command(self, vehicle_id: str, name: str, args: Sequence[str]) -> None: ...
+
+    def latest_channels(self, vehicle_id: str) -> Mapping[str, Sample]:
+        """The latest value of every telemetry channel received from the vehicle."""
 
     def wait_for_event(
         self,
@@ -315,6 +319,7 @@ class VehicleIngest:
         self._last_data_at: datetime | None = None
         self._error: str | None = None
         self._channels_received = 0
+        self._latest: dict[str, Sample] = {}
 
     # --- lifecycle ----------------------------------------------------------------------
 
@@ -420,6 +425,7 @@ class VehicleIngest:
         with self._lock:
             self._last_data_at = reading.received_at
             self._channels_received += 1
+            self._latest[reading.name] = Sample(reading.value, reading.received_at)
         if self._sink is not None:
             self._sink.write(reading)
         if self._tracker.on_channel(reading):
@@ -496,6 +502,10 @@ class VehicleIngest:
         with self._changed:
             return list(self._events)[-limit:]
 
+    def latest_channels(self) -> dict[str, Sample]:
+        with self._lock:
+            return dict(self._latest)
+
 
 class IngestManager:
     """Runs one ingest per vehicle that has a GDS endpoint. Implements `VehicleComms`."""
@@ -551,6 +561,10 @@ class IngestManager:
         if ingest is None:
             raise LinkDown(f"'{vehicle_id}' has no GDS endpoint, so there is no link to it")
         return ingest
+
+    def latest_channels(self, vehicle_id: str) -> Mapping[str, Sample]:
+        ingest = self._ingests.get(vehicle_id)
+        return ingest.latest_channels() if ingest else {}
 
     def refresh_identity(self, vehicle_id: str, timeout_s: float) -> bool:
         return self._ingest(vehicle_id).refresh_identity(timeout_s)

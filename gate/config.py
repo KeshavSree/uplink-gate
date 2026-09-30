@@ -47,6 +47,8 @@ class GateConfig:
     sequencer: str = "Ref.fpySeq"
     #: Directory on the vehicle that uplinked files are written to.
     uplink_dir: str = "/tmp/uplink"
+    #: YAML model for the simulation check. None means the check is skipped.
+    simulation_model: Path | None = None
 
     @classmethod
     def from_env(cls) -> GateConfig:
@@ -63,6 +65,9 @@ class GateConfig:
             identity_poll_s=float(os.environ.get("GATE_IDENTITY_POLL_S", "10")),
             sequencer=os.environ.get("GATE_SEQUENCER", "Ref.fpySeq"),
             uplink_dir=os.environ.get("GATE_UPLINK_DIR", "/tmp/uplink"),
+            simulation_model=Path(model)
+            if (model := os.environ.get("GATE_SIMULATION_MODEL"))
+            else None,
         )
 
     def with_(self, **changes: object) -> GateConfig:

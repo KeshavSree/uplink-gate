@@ -5,7 +5,9 @@ and its sequencing language, [Fpy](https://github.com/fprime-community/fpy). Bef
 sequence is sent to a spacecraft, the uplink gate confirms that the sequence was compiled
 with the dictionary of the flight software build that is **actually running** on that
 vehicle, as reported by the vehicle's own telemetry. If the two do not match, it blocks the
-upload and says why.
+upload and says why. Three more checks build on that: the same bytes must have run on a
+testbed with the same dictionary, must break no flight rule, and must not drive a small
+modeled state somewhere it must not go, starting from live telemetry.
 
 ## Terms
 
@@ -25,6 +27,7 @@ These words are used with exactly these meanings in the code, the docs and the U
 | **Compile record** | The gate's own record that bytecode X was compiled from sequence Y with dictionary hash Z. |
 | **Sidecar** | The file `<out>.bin.gate.json` written next to every bytecode file. It holds the compile record, so the record travels with the file. |
 | **Gate decision** | PASS or BLOCK, with a list of check results and reasons. |
+| **Flight rule** | A documented way the vehicle must not be operated, written so a program can check it. |
 
 ## The problem
 
@@ -41,13 +44,32 @@ body size, followed by a checksum
 checksum. Neither one changes when a command argument changes type.
 
 This repository contains two real builds of F Prime's reference deployment (`Ref`) that
-differ in one line: the `Frequency` argument of `Ref.SG1.Settings` is a `U32` in one build
-and a `U16` in the other. The same sequence compiles to 236 bytes for the first build and
-234 bytes for the second. Both files have a valid header and a valid checksum.
+differ in one line: the `Frequency` argument of `Ref.SG1.Settings` is a `U32` in build A and
+a `U16` in build B. The same sequence compiles to different bytes for each. Both files have
+a valid header and a valid checksum.
 
-## 60-second demo
+### What happens without the gate
 
-Needs only Python 3.12 and [uv](https://docs.astral.sh/uv/). No Docker, no web server.
+I uplinked mismatched bytecode to a running vehicle directly, bypassing the gate. In both
+directions (bytecode for build B on build A, and the reverse) the Fpy sequencer accepted the
+file, ran the first statement, and then the mismatched command was rejected:
+
+```
+Ref.fpySeq.LogActivityHi            Sequence /tmp/uplink/forB.bin: signal_setup: configuring SG1
+CdhCore.cmdDisp.OpCodeDispatched    Opcode 0x10011000 dispatched to port 12
+CdhCore.cmdDisp.OpCodeError         Opcode 0x10011000 completed with error FORMAT_ERROR
+Ref.fpySeq.SequenceExitedWithError  Sequence /tmp/uplink/forB.bin exited with error code 17
+```
+
+So the result was a sequence that stopped partway, after its earlier statements had already
+run. F Prime caught it only because the two argument layouts have different sizes (a command
+handler checks that its argument buffer is fully consumed). A change that keeps the size the
+same, such as swapping two arguments of the same width or renumbering an enumeration, would
+not be caught that way.
+
+## 60-second demo (terminal)
+
+Needs only Python 3.12 and [uv](https://docs.astral.sh/uv/). No Docker, no server.
 
 ```console
 $ uv sync
@@ -59,11 +81,8 @@ dictionary 4bbb2268b356ad9e8ca4c46a2ca666665235f8cc599d6ce11ccf740482bdef37
   deployment       Ref.Ref
   project version  gate-demo-1.0.0
 $ gate dict add tests/fixtures/dictionaries/B/RefTopologyDictionary.json
-dictionary d6c09e7f3db838a98a4548a05c443bfc1aebfb86dc58b6cc23ae20d93243e2f8
-  deployment       Ref.Ref
-  project version  gate-demo-1.1.0
 
-# 2. Vehicle sc1 reports that it runs gate-demo-1.0.0. (Here by hand. Phase 2 reads telemetry.)
+# 2. Vehicle sc1 reports that it runs gate-demo-1.0.0. (By hand here; the service reads telemetry.)
 $ gate state set sc1 --project-version gate-demo-1.0.0
 sc1: project version gate-demo-1.0.0
   'sc1' is running dictionary 4bbb2268b356 (gate-demo-1.0.0), identified by project version label
@@ -71,7 +90,7 @@ sc1: project version gate-demo-1.0.0
 # 3. Compile a sequence for sc1. The gate picks the dictionary sc1 is running.
 $ gate compile sequences/signal_setup.fpy --vehicle sc1
 compiled sequences/signal_setup.bin
-  bytecode    335aca577057
+  bytecode    3141d3131bdf
   dictionary  4bbb2268b356 (gate-demo-1.0.0)
   compiler    fprime-fpy 0.6.0
 
@@ -96,13 +115,16 @@ step. `--json` prints the decision for machines. A reading made with `gate state
 stale after 60 seconds, like a telemetry reading, so step 4 must follow step 2 within a
 minute (or pass `--max-age`).
 
-## Live demo: three vehicles
+## Live demo: three vehicles, the service and the 3D UI
 
-Needs Docker. The first `up` builds F Prime's `Ref` deployment twice, which takes a while.
+Needs Docker. The first `up` builds F Prime's `Ref` deployment twice.
 
 ```console
 $ docker compose up --build -d
+$ open http://localhost:8000          # the UI; Grafana is on http://localhost:3000
 ```
+
+If a port is taken, set `GATE_PORT`, `GRAFANA_PORT` or `INFLUX_PORT` (for example in `.env`).
 
 This starts three vehicles, each a container running a real build of `Ref` and a real
 `fprime-gds`, plus the gate service, PostgreSQL (the registry), InfluxDB and Grafana.
@@ -118,88 +140,57 @@ The gate service connects to each vehicle's GDS, asks the flight software for it
 project version from `CdhCore.version.ProjectVersion` and the dictionary ID from
 `CdhCore.version.CustomVersion01`. No one tells the gate what a vehicle is running.
 
+The UI shows Earth, the Moon and the three vehicles on simple orbits, each coloured by its
+gate state. Selecting a vehicle opens its console: the project version and dictionary hash
+it reports, how fresh that reading is, the bytecode compiled so far with Check and Uplink
+buttons, each check's result, and the flight software's own events. "Compile for all
+vehicles" starts one compile per vehicle at once, each with that vehicle's dictionary, in
+separate worker processes.
+
+The live swap reflashes a vehicle while everything keeps running:
+
 ```console
-$ API=http://localhost:8000/api
-
-# What is each vehicle running? (from live telemetry)
-$ curl -s $API/vehicles | jq -r '.[] | "\(.id)  \(.state.observed_project_version)  \(.resolution.message)"'
-
-# Compile one sequence for all three vehicles at once. Each job uses the dictionary that
-# vehicle is running and runs in its own worker process.
-$ curl -s -X POST "$API/compile/all?wait=true" -H 'Content-Type: application/json' \
-    -d '{"sequence_name": "signal_setup"}' | jq '.[] | {vehicle_id, status, worker_pid, compile: .compile.id}'
-
-# Check and uplink the bytecode compiled for sc1 (use the compile ID printed above).
-$ curl -s -X POST $API/check  -H 'Content-Type: application/json' -d '{"compile_id": 1, "vehicle_id": "sc1"}' | jq .result
-"PASS"
-$ curl -s -X POST $API/uplink -H 'Content-Type: application/json' -d '{"compile_id": 1, "vehicle_id": "sc1"}' | jq '{ok, detail}'
-{ "ok": true, "detail": "Completed sequence file /tmp/uplink/335aca577057c6ac.bin" }
-
-# The same bytecode for sc2, which runs the other build: refused, and nothing is sent.
-$ curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/uplink -H 'Content-Type: application/json' \
-    -d '{"compile_id": 1, "vehicle_id": "sc2"}'
-409
-
-# Live swap: reflash sc1 to build B while everything keeps running.
 $ ./scripts/reflash.sh sc1 B
-$ curl -s -X POST $API/check -H 'Content-Type: application/json' -d '{"compile_id": 1, "vehicle_id": "sc1"}' \
-    | jq -r '.result, .checks[0].message'
-BLOCK
-compiled with dictionary 4bbb2268b356 (gate-demo-1.0.0) but 'sc1' is running d6c09e7f3db8 (gate-demo-1.1.0)
 ```
+
+Within about ten seconds the gate reads the new build from telemetry, and bytecode that
+passed for `sc1` a moment ago is blocked. [`docs/demo.md`](docs/demo.md) is a step-by-step
+script for showing all of this.
+
+### API
+
+| Method and path | What it does |
+|---|---|
+| `GET /api/vehicles`, `GET /api/vehicles/{id}` | what each vehicle is running, link status, recent compiles, decisions and events |
+| `POST /api/compile`, `POST /api/compile/all` | start compile jobs (`?wait=true` to wait for the result) |
+| `POST /api/check` | run the gate for a compile record and a vehicle; returns the decision |
+| `POST /api/uplink` | send bytecode and run it; `409` if the gate refuses |
+| `GET /api/decisions`, `/api/compiles`, `/api/uplinks`, `/api/testbed-runs`, `/api/rules` | history |
+| `WS /api/events` | vehicle state changes, flight software events, compile progress, gate decisions |
 
 `POST /api/uplink` is the only path that sends bytecode. It refuses without a PASS decision
 for exactly those bytes on that vehicle that is at most 120 seconds old. It then asks the
 vehicle for its versions again and re-runs the checks immediately before sending, so a
-vehicle that changed build after the decision is still caught. `WS /api/events` streams
-vehicle state changes, flight software events, compile progress and gate decisions.
-
-The end-to-end tests do all of this against the running stack:
-
-```console
-$ uv run pytest -m integration
-```
-
-Grafana at http://localhost:3000 has a small dashboard of vehicle telemetry
-(`ops/grafana/dashboards/vehicles.json`). Every telemetry channel is written to InfluxDB.
-
-### What happens without the gate
-
-I uplinked mismatched bytecode directly, bypassing the gate, to see what the flight software
-does with it. In both directions (bytecode for build B on a vehicle running build A, and the
-reverse) the Fpy sequencer accepted the file, because the header and checksum are valid. It
-ran the first statement, then the mismatched command was rejected with `FORMAT_ERROR` and
-the sequence stopped with `SequenceExitedWithError`:
-
-```
-Ref.fpySeq.LogActivityHi            Sequence /tmp/uplink/forB.bin: signal_setup: configuring SG1
-CdhCore.cmdDisp.OpCodeDispatched    Opcode 0x10011000 dispatched to port 12
-CdhCore.cmdDisp.OpCodeError         Opcode 0x10011000 completed with error FORMAT_ERROR
-Ref.fpySeq.SequenceExitedWithError  Sequence /tmp/uplink/forB.bin exited with error code 17
-```
-
-So in this case the result is a sequence that stops partway through, after its earlier
-statements have already run. F Prime caught it only because the two argument layouts have
-different sizes (it checks that a command's argument buffer is fully consumed). A change
-that keeps the size the same, such as swapping two arguments of the same width or
-renumbering an enumeration, would not be caught that way.
+vehicle that changed build after the decision is still caught. Bytecode is stored on the
+vehicle under its own hash, and the adapter waits for the Fpy sequencer's completion event.
 
 ## The checks
 
 A gate decision is BLOCK if any check blocks. Every check runs and reports separately, so a
-decision shows all the reasons at once.
+decision shows all the reasons at once. The CLI runs `build_match` by default (`--checks`
+or `GATE_CHECKS` selects others); the service in `docker compose` runs all four.
 
 | Check | Passes when |
 |---|---|
 | `build_match` | the bytecode was compiled with the dictionary the vehicle is running |
 | `testbed_equiv` | these exact bytes already ran successfully on a testbed that was running the same dictionary |
 | `flight_rules` | the sequence breaks no flight rule, read with the vehicle's dictionary |
-
-The CLI runs `build_match` by default (`--checks` or `GATE_CHECKS` selects others). The
-service in `docker compose` runs all three.
+| `simulation` | starting from the vehicle's latest telemetry, the sequence keeps the modeled state within its constraints |
 
 ```console
-$ gate check sequences/signal_setup.bin --vehicle sc1 --checks build_match,testbed_equiv,flight_rules
+$ gate rules load rules/demo_rules.yaml
+$ GATE_SIMULATION_MODEL=rules/demo_model.yaml gate check sequences/signal_setup.bin --vehicle sc1 \
+    --checks build_match,testbed_equiv,flight_rules,simulation
 BLOCK  signal_setup.bin -> sc1
   PASS  build_match    OK
         compiled with dictionary 4bbb2268b356, which is what 'sc1' is running
@@ -207,33 +198,14 @@ BLOCK  signal_setup.bin -> sc1
         this bytecode has not been run on a testbed running dictionary 4bbb2268b356
   PASS  flight_rules   OK
         3 rule(s) hold for the 2 command(s) in the sequence
+  BLOCK simulation     SIMULATION_VIOLATION
+        sg1_running is not known when Ref.SG1.Settings is sent, but it must be false
 ```
 
-**Testbed equivalence.** A testbed run is evidence only for the bytes that ran and the
-dictionary the testbed was running at the time. The gate records a `testbed_run` by itself
-when the testbed's Fpy sequencer reports that a sequence ended (`SequenceDone`, or a
-warning that names the file). The uplink adapter stores bytecode on a vehicle under its
-hash, so the event identifies the bytes. After a vehicle changes build, earlier testbed
-runs stop counting for it, and a testbed on the old build cannot produce new evidence.
+(The CLI has no telemetry, so the simulation cannot know the starting state and blocks. The
+service passes it the vehicle's live telemetry.)
 
-**Flight rules.** A flight rule is a documented way the vehicle must not be operated. The
-rule format is small and declarative ([`rules/demo_rules.yaml`](rules/demo_rules.yaml),
-described in [`gate/rules.py`](gate/rules.py)) and has three rule types: a forbidden
-command, a range or set of allowed values for a command argument, and a minimum time
-between two commands. These are the rule archetypes described by JPL's
-[FRESH](https://github.com/NASA-JPL-Teamtools-Studio/tts_fresh) flight rule checker, which
-is where the idea comes from. Like FRESH, the check is static: it reads the commands,
-constant arguments and constant waits out of the bytecode
-([`gate/bytecode.py`](gate/bytecode.py), using the Fpy package's own deserializer) and does
-not run the sequence. An argument computed while the sequence runs cannot be verified and
-counts as a violation. A wait inside a branch or a loop is not trusted.
-
-Because the bytecode is decoded with the dictionary of the target vehicle, this check also
-notices a build mismatch on its own: the argument bytes of `Ref.SG1.Settings` compiled for
-one build do not fit the other build's definition, and the check blocks with
-`BYTECODE_UNREADABLE`.
-
-## How the gate decides which dictionary a vehicle is running
+### build_match: how the gate decides which dictionary a vehicle is running
 
 1. Read the project version the vehicle reports.
 2. Find the registry dictionaries whose `metadata.projectVersion` equals it.
@@ -246,10 +218,13 @@ one build do not fit the other build's definition, and the check blocks with
 4. A project version ending in `-dirty` or `-broken` is BLOCK `DIRTY_BUILD` by default.
 5. A reading older than 60 seconds (configurable) is BLOCK `STALE_BUILD_IDENTITY`.
 
-Every BLOCK reason is a stable code (`gate.results.Reason`) plus a human message. Nothing
-downstream parses the message.
+Then the compile record: the registry's records for exactly these bytes, plus the sidecar
+next to the file. No record is BLOCK `NO_COMPILE_RECORD`; a sidecar written for other bytes
+is BLOCK `BYTECODE_MODIFIED`. The check passes only if one of the recorded dictionary hashes
+is the running one. Every BLOCK reason is a stable code (`gate.results.Reason`) plus a human
+message; nothing downstream parses the message.
 
-### Why a project version is not enough
+#### Why a project version is not enough
 
 While building the two demo builds I hit this by accident. In F Prime v4.3.0 the version
 files are generated by a CMake custom command that has outputs but no dependencies
@@ -259,12 +234,60 @@ commit `gate-demo-1.1.0` and rebuilt in the same build directory. The result was
 with the new argument type whose dictionary and binary were both still stamped
 `gate-demo-1.0.0`.
 
-That dictionary is kept as a test fixture
-(`tests/fixtures/dictionaries/B_stale_version/`). With it in the registry, the project
-version `gate-demo-1.0.0` maps to two different dictionaries, and the gate blocks with
-`AMBIGUOUS_BUILD`. A dictionary ID removes the ambiguity, because it is derived from the
-dictionary's content. This is the practice I would recommend: **have the flight software
-report a hash of its own dictionary, and match on that.**
+That dictionary is kept as a test fixture (`tests/fixtures/dictionaries/B_stale_version/`).
+With it in the registry, the project version `gate-demo-1.0.0` maps to two different
+dictionaries, and the gate blocks with `AMBIGUOUS_BUILD`. A dictionary ID removes the
+ambiguity, because it is derived from the dictionary's content. This is the practice I
+would recommend: **have the flight software report a hash of its own dictionary, and match
+on that.** The demo builds do it with a 20-line component (`Ref.DictionaryId`, see
+[`vehicles/`](vehicles/README.md)) that sets a `Svc.Version` custom version at startup.
+
+### testbed_equiv
+
+A testbed run is evidence only for the bytes that ran and the dictionary the testbed was
+running at the time. The gate records a `testbed_run` by itself when the testbed's Fpy
+sequencer reports that a sequence ended (`SequenceDone`, or a warning that names the file).
+The uplink adapter stores bytecode on a vehicle under its hash, so the event identifies the
+bytes. After a vehicle changes build, earlier testbed runs stop counting for it, and a
+testbed still on the old build cannot produce new evidence.
+
+### flight_rules
+
+The rule format is small and declarative ([`rules/demo_rules.yaml`](rules/demo_rules.yaml),
+described in [`gate/rules.py`](gate/rules.py)) and has three rule types: a forbidden
+command, a range or set of allowed values for a command argument, and a minimum time between
+two commands. These are the rule archetypes described by JPL's
+[FRESH](https://github.com/NASA-JPL-Teamtools-Studio/tts_fresh) flight rule checker, which
+is where the idea comes from. Like FRESH, the check is static: it reads the commands,
+constant arguments and constant waits out of the bytecode
+([`gate/bytecode.py`](gate/bytecode.py), using the Fpy package's own deserializer) without
+running the sequence. An argument computed while the sequence runs cannot be verified and
+counts as a violation. A wait inside a branch or a loop is not trusted.
+
+Because the bytecode is decoded with the dictionary of the target vehicle, this check also
+notices a build mismatch on its own: the argument bytes of `Ref.SG1.Settings` compiled for
+one build do not fit the other build's definition, and the check blocks with
+`BYTECODE_UNREADABLE`.
+
+### simulation
+
+Static rules cannot say "do not send command X while the vehicle is in state Y". The
+simulation check predicts a few modeled state variables: their starting values come from the
+vehicle's latest telemetry, each modeled command applies a declared effect, and constraints
+are checked against the predicted state just before each command. The model is a short YAML
+file ([`rules/demo_model.yaml`](rules/demo_model.yaml), format in
+[`gate/simulation.py`](gate/simulation.py)).
+
+The demo model tracks whether signal generator 1 is running. `SignalGen` has no channel that
+says so, but it only sends `Ref.SG1.Output` while it runs, so a recent `Output` reading
+means it is running. `Ref.SG1.Toggle` flips it, and `Ref.SG1.Settings` may only be sent
+while it is stopped. `signal_setup` passes on a vehicle whose generator is stopped; right
+after it has run, the same kind of sequence is blocked, because the generator is now
+running and the toggle would switch it off instead of on.
+
+It assumes every command succeeds, commands run in file order and nothing else changes the
+modeled state. A sequence that loops or branches on telemetry is reported as unpredictable.
+Unknown starting state counts as a violation.
 
 ## What is in this repository
 
@@ -275,14 +298,25 @@ api/         the gate service (FastAPI): REST, WebSocket, compile workers
 web/         the 3D UI (Vite, React, TypeScript, react-three-fiber)
 vehicles/    Dockerfile and patches that build the two demo builds of Ref
 sequences/   example Fpy sequences
-rules/       example flight rules
+rules/       example flight rules and the simulation model
 ops/         Grafana provisioning and dashboard
-scripts/     reflash.sh, the live swap
+scripts/     reflash.sh (the live swap) and check.sh (lint, types, unit tests)
 tests/       pytest suite; dictionaries under tests/fixtures are from real Ref builds
+docs/        demo script and design notes
 ```
 
-Run the tests with `uv run pytest`. They use SQLite in a temporary directory and make no
-network calls.
+## Tests
+
+```console
+$ ./scripts/check.sh                 # ruff, mypy, 170+ unit tests; no network, no Docker
+$ (cd web && npm ci && npm test)     # orbit propagator and UI state helpers
+$ docker compose up --build -d && uv run pytest -m integration   # against the live vehicles
+```
+
+The integration tests compile, check and uplink through the HTTP API and watch the real
+flight software run the sequence; they cover the block on a mismatched vehicle, the flight
+rule and simulation blocks, concurrent compiles, and the live swap. CI (GitHub Actions) runs
+lint, types and unit tests on every push, and the integration tests on pushes to `main`.
 
 ## Status
 
@@ -290,7 +324,9 @@ network calls.
 - [x] Phase 2: real vehicles in Docker, telemetry ingest, API, uplink
 - [x] Phase 3: testbed equivalence and flight rule checks
 - [x] Phase 4: 3D web UI
-- [ ] Phase 5: simulation check
+- [x] Phase 5: simulation check
+
+[`docs/design.md`](docs/design.md) lists the design decisions and the known limits.
 
 ## Scope and honesty
 

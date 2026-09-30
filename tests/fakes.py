@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gate.registry import Registry, utcnow
+from gate.simulation import Sample
 from gate.telemetry import ChannelReading, EventReading, LinkDown
 
 SEQUENCER = "Ref.fpySeq"
@@ -20,6 +21,8 @@ class FakeComms:
         self.registry = registry
         #: vehicle ID -> (project version, dictionary ID) the vehicle would report if asked.
         self.identity: dict[str, tuple[str, str | None]] = {}
+        #: vehicle ID -> latest telemetry by channel name.
+        self.channels: dict[str, dict[str, Sample]] = {}
         self.sent_files: list[tuple[str, Path, str]] = []
         self.sent_commands: list[tuple[str, str, list[str]]] = []
         self.answers_identity = True
@@ -46,6 +49,9 @@ class FakeComms:
             source="telemetry",
         )
         return True
+
+    def latest_channels(self, vehicle_id: str) -> dict[str, Sample]:
+        return dict(self.channels.get(vehicle_id, {}))
 
     def uplink_file(self, vehicle_id: str, local_path: Path, remote_path: str) -> None:
         if not self.link_up:

@@ -376,6 +376,7 @@ class GateService:
                 request.vehicle_id,
                 config=self.config,
                 checks=request.checks,
+                telemetry=self.comms.latest_channels(request.vehicle_id) if self.comms else None,
             )
         except ValueError as error:
             raise HTTPException(422, str(error)) from error

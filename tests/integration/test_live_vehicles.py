@@ -15,6 +15,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -53,12 +54,19 @@ def api() -> Iterator[httpx.Client]:
 
 
 def put_on_build(api: httpx.Client, vehicle: str, build: str) -> None:
+    """Reflash a vehicle and wait until the gate has a reading from the restarted software."""
+    asked_at = datetime.now(UTC)
     reflash(vehicle, build)
-    wait_for(
-        lambda: running(api, vehicle) == BUILDS[build]["dictionary_sha256"],
-        60,
-        f"the gate to see {vehicle} on build {build}",
-    )
+
+    def confirmed() -> bool:
+        state = api.get(f"/api/vehicles/{vehicle}").json().get("state")
+        return (
+            running(api, vehicle) == BUILDS[build]["dictionary_sha256"]
+            and state is not None
+            and datetime.fromisoformat(state["observed_at"]) > asked_at + timedelta(seconds=2)
+        )
+
+    wait_for(confirmed, 60, f"the gate to see {vehicle} on build {build}")
 
 
 def running(api: httpx.Client, vehicle: str) -> str | None:
@@ -79,21 +87,27 @@ def fleet_ready(api: httpx.Client) -> None:
         return len(vehicles) == 3 and all(v["resolution"]["ok"] for v in vehicles.values())
 
     wait_for(ready, 120, "all three vehicles to report a known build")
+    # Reflashing restarts the flight software, so every vehicle starts from a known state
+    # (signal generators stopped) whatever ran on it before.
     for vehicle, build in (("testbed", "A"), ("sc1", "A"), ("sc2", "B")):
-        if running(api, vehicle) != BUILDS[build]["dictionary_sha256"]:
-            put_on_build(api, vehicle, build)
+        put_on_build(api, vehicle, build)
+    time.sleep(6)  # let telemetry from before the restart age out of the simulation's window
     assert api.get("/api/config").json()["checks"] == [
         "build_match",
         "testbed_equiv",
         "flight_rules",
+        "simulation",
     ]
 
 
+# Changes the settings but leaves the generator stopped, so tests do not affect each other.
 SIGNAL_SETUP = """\
 log("run {token}")
 Ref.SG1.Settings(5, 2.5, 0.0, Ref.SignalType.SINE)
-Ref.SG1.Toggle()
 """
+
+# Also starts the generator. Only the simulation test uses this.
+SIGNAL_START = SIGNAL_SETUP + "Ref.SG1.Toggle()\n"
 
 
 def compile_for(
@@ -162,13 +176,14 @@ def test_compile_check_uplink_and_sequence_runs_on_a_matching_vehicle(api: httpx
     assert first["result"] == "BLOCK"
     assert first["by_check"]["build_match"]["status"] == "PASS"
     assert first["by_check"]["flight_rules"]["status"] == "PASS"
+    assert first["by_check"]["simulation"]["status"] == "PASS"
     assert first["by_check"]["testbed_equiv"]["reason"] == "NO_TESTBED_RUN"
     assert uplink(api, compile_id, "sc1").status_code == 409
 
     qualify_on_testbed(api, compile_id)
     decision = check(api, compile_id, "sc1")
     assert decision["result"] == "PASS", decision
-    assert [c["status"] for c in decision["checks"]] == ["PASS", "PASS", "PASS"]
+    assert [c["status"] for c in decision["checks"]] == ["PASS", "PASS", "PASS", "PASS"]
 
     response = uplink(api, compile_id, "sc1")
     assert response.status_code == 200, response.text
@@ -223,6 +238,43 @@ def test_flight_rule_violation_blocks_even_the_testbed(api: httpx.Client) -> Non
     assert uplink(api, compile_id, "testbed").status_code == 409
 
 
+def test_simulation_blocks_on_the_live_state_of_the_vehicle(api: httpx.Client) -> None:
+    """The same kind of sequence passes or blocks depending on what telemetry says right now."""
+    start = compile_for(api, "testbed", SIGNAL_START.format(token=uuid.uuid4().hex))
+    decision = check(api, start, "testbed")
+    simulation = decision["by_check"]["simulation"]
+    assert decision["result"] == "PASS", decision
+    assert simulation["details"]["initial_state"]["sg1_running"] is False
+    assert simulation["details"]["final_state"]["sg1_running"] is True
+    assert uplink(api, start, "testbed").json()["ok"]
+
+    try:
+        # The generator now runs. A second sequence that changes its settings must not pass.
+        def blocked_by_simulation() -> dict[str, Any] | None:
+            again = compile_for(api, "testbed", SIGNAL_START.format(token=uuid.uuid4().hex))
+            result = check(api, again, "testbed")["by_check"]["simulation"]
+            return result if result["status"] == "BLOCK" else None
+
+        blocked = wait_for(blocked_by_simulation, 20, "telemetry to show the generator running")
+        assert blocked["reason"] == "SIMULATION_VIOLATION"
+        assert blocked["details"]["initial_state"]["sg1_running"] is True
+        assert blocked["details"]["violations"][0]["constraint_id"] == (
+            "sg1-settings-only-while-stopped"
+        )
+    finally:
+        # Stop it again with a sequence, through the gate like everything else.
+        stop = compile_for(api, "testbed", f'log("stop {uuid.uuid4().hex}")\nRef.SG1.Toggle()\n')
+        stopping = check(api, stop, "testbed")
+        assert stopping["by_check"]["simulation"]["details"]["final_state"]["sg1_running"] is False
+        assert uplink(api, stop, "testbed").json()["ok"]
+
+    def passes_again() -> bool:
+        fresh = compile_for(api, "testbed", SIGNAL_START.format(token=uuid.uuid4().hex))
+        return check(api, fresh, "testbed")["by_check"]["simulation"]["status"] == "PASS"
+
+    wait_for(passes_again, 20, "telemetry to show the generator stopped")
+
+
 def test_compiles_for_all_vehicles_run_concurrently(api: httpx.Client) -> None:
     jobs = api.post(
         "/api/compile/all", params={"wait": "true"}, json={"sequence_name": "signal_setup"}
@@ -266,4 +318,7 @@ def test_live_swap_flips_pass_to_block_without_a_restart(api: httpx.Client) -> N
     finally:
         put_on_build(api, "testbed", "A")
         put_on_build(api, "sc1", "A")
-    assert check(api, compile_id, "sc1")["result"] == "PASS"
+    # Back on the original build, the original bytecode and its testbed evidence count again.
+    final = check(api, compile_id, "sc1")
+    assert final["by_check"]["build_match"]["status"] == "PASS"
+    assert final["by_check"]["testbed_equiv"]["status"] == "PASS"

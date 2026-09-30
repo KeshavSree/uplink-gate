@@ -1,0 +1,4 @@
+# Stop signal generator 1. Toggle switches it between running and stopped, so this only
+# stops it if it is running. The simulation check shows which way the toggle will go.
+Ref.SG1.Toggle()
+log("signal_stop: toggled SG1")
