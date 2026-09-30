@@ -106,6 +106,8 @@ services:
       GATE_SIMULATION_MODEL: /app/rules/demo_model.yaml
       GATE_CHECKS: build_match,testbed_equiv,flight_rules,simulation
       GATE_COMPILE_PACING_S: ${GATE_COMPILE_PACING_S:-0}
+      # Set to require a password for compile, check and uplink (for a public demo).
+      GATE_WRITE_TOKEN: ${GATE_WRITE_TOKEN:-}
       INFLUX_URL: http://influxdb:8086
       INFLUX_TOKEN: gate-demo-token
       INFLUX_ORG: gate

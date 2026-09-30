@@ -110,11 +110,37 @@ export interface GateEvent {
   [key: string]: unknown;
 }
 
-async function request<T>(path: string, init?: RequestInit, accept: number[] = []): Promise<T> {
+const TOKEN_KEY = "uplink-gate-password";
+
+function storedToken(): string {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function storeToken(token: string): void {
+  try {
+    window.localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // private windows may refuse storage; the password is then asked for again next time
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit, accept: number[] = [], retried = false): Promise<T> {
   const response = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: { "Content-Type": "application/json", "X-Gate-Token": storedToken() },
   });
+  // A public deployment asks for a password before compiling, checking or uplinking.
+  if (response.status === 401 && !retried) {
+    const token = window.prompt("Password to compile, check and uplink on this demo:");
+    if (token) {
+      storeToken(token);
+      return request<T>(path, init, accept, true);
+    }
+  }
   if (!response.ok && !accept.includes(response.status)) {
     let detail = `${response.status} ${response.statusText}`;
     try {
@@ -127,6 +153,14 @@ async function request<T>(path: string, init?: RequestInit, accept: number[] = [
     throw new Error(detail);
   }
   return (await response.json()) as T;
+}
+
+/** Where the live event stream is. A deployment in front of a tunnel sets it at build time. */
+export function eventsUrl(): string {
+  const configured = import.meta.env.VITE_EVENTS_URL as string | undefined;
+  if (configured) return configured;
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}/api/events`;
 }
 
 const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });

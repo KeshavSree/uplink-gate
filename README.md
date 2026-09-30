@@ -157,6 +157,23 @@ Within about ten seconds the gate reads the new build from telemetry, and byteco
 passed for `sc1` a moment ago is blocked. [`docs/demo.md`](docs/demo.md) is a step-by-step
 script for showing all of this.
 
+### Publishing the demo
+
+The vehicles and the gate service need Docker and long-lived connections, so they run on a
+machine you control. `scripts/publish.sh` makes that machine's stack public: it opens a free
+[Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+to the gate service and deploys the web UI to Vercel, with `/api` sent through the tunnel.
+
+```console
+$ echo "GATE_WRITE_TOKEN=<a password>" >> .env && docker compose up -d
+$ ./scripts/publish.sh           # needs cloudflared and a logged-in vercel CLI
+$ ./scripts/publish.sh --stop    # close the tunnel
+```
+
+With `GATE_WRITE_TOKEN` set, anyone can watch, but compiling, checking and uplinking ask
+for the password. A quick tunnel gets a new address when it restarts (for example after the
+machine sleeps), so run `publish.sh` again then.
+
 ### API
 
 | Method and path | What it does |
@@ -300,7 +317,7 @@ vehicles/    Dockerfile and patches that build the two demo builds of Ref
 sequences/   example Fpy sequences
 rules/       example flight rules and the simulation model
 ops/         Grafana provisioning and dashboard
-scripts/     reflash.sh (the live swap) and check.sh (lint, types, unit tests)
+scripts/     reflash.sh (the live swap), check.sh (lint, types, tests), publish.sh
 tests/       pytest suite; dictionaries under tests/fixtures are from real Ref builds
 docs/        demo script and design notes
 ```

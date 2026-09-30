@@ -7,6 +7,7 @@ Every decision is made by `gate.engine.evaluate` and every transmission goes thr
 from __future__ import annotations
 
 import asyncio
+import hmac
 import itertools
 import logging
 import multiprocessing
@@ -20,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -63,6 +64,9 @@ class Settings:
     #: YAML flight rules file loaded into the registry at startup, if set.
     rules_file: Path | None = None
     start_ingest: bool = True
+    #: If set, every POST to the API needs this value in the X-Gate-Token header.
+    #: Reading stays open. Meant for a demo exposed on the internet.
+    write_token: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -86,6 +90,7 @@ class Settings:
             influx_org=os.environ.get("INFLUX_ORG", "gate"),
             influx_bucket=os.environ.get("INFLUX_BUCKET", "telemetry"),
             rules_file=Path(rules) if rules else None,
+            write_token=os.environ.get("GATE_WRITE_TOKEN", ""),
         )
 
 
@@ -449,6 +454,19 @@ def create_app(
             await asyncio.to_thread(service.stop)
 
     app = FastAPI(title="Uplink Gate", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def require_token_for_actions(request: Request, call_next: Any) -> Any:
+        token = service.settings.write_token
+        if (
+            token
+            and request.method == "POST"
+            and request.url.path.startswith("/api/")
+            and not hmac.compare_digest(request.headers.get("x-gate-token", ""), token)
+        ):
+            return JSONResponse({"detail": "a password is needed to do this"}, status_code=401)
+        return await call_next(request)
+
     app.state.service = service
     registry = service.registry
 

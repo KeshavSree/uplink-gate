@@ -242,3 +242,22 @@ def test_a_restarted_service_does_not_overwrite_earlier_bytecode(
             paths.append(job["compile"]["bytecode_path"])
     assert paths[0] != paths[1]
     assert Path(paths[0]).is_file() and Path(paths[1]).is_file()
+
+
+def test_actions_need_the_password_when_one_is_set(config: GateConfig, seeds: Path) -> None:
+    settings = Settings(
+        seed_dictionaries=seeds,
+        sequences_dir=SEQUENCES,
+        web_dir=None,
+        compile_workers=1,
+        start_ingest=False,
+        write_token="s3cret",
+    )
+    body = {"dictionary": HASH_A[:10], "sequence_name": "signal_setup"}
+    with TestClient(create_app(config, settings)) as client:
+        assert client.get("/api/vehicles").status_code == 200  # reading stays open
+        assert client.post("/api/compile?wait=true", json=body).status_code == 401
+        wrong = {"X-Gate-Token": "nope"}
+        assert client.post("/api/compile?wait=true", json=body, headers=wrong).status_code == 401
+        right = {"X-Gate-Token": "s3cret"}
+        assert client.post("/api/compile?wait=true", json=body, headers=right).status_code == 202

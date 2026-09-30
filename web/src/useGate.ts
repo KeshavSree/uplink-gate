@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
+  eventsUrl,
   type Compile,
   type CompileJob,
   type Decision,
@@ -117,8 +118,7 @@ export function useGate(selectedId: string | null): Gate {
     let pending: number | undefined;
 
     const open = () => {
-      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-      socket = new WebSocket(`${scheme}://${window.location.host}/api/events`);
+      socket = new WebSocket(eventsUrl());
       socket.onopen = () => setConnected(true);
       socket.onclose = () => {
         setConnected(false);
