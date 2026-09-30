@@ -1,4 +1,11 @@
-# The gate service: API, telemetry ingest, compile workers and (once built) the web UI.
+# The gate service: API, telemetry ingest, compile workers and the web UI.
+FROM node:24-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM python:3.12-slim AS service
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 PYTHONUNBUFFERED=1
@@ -14,6 +21,7 @@ COPY api ./api
 COPY sequences ./sequences
 COPY rules ./rules
 RUN uv sync --frozen --no-dev --extra server
+COPY --from=web /web/dist ./web/dist
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     GATE_HOME=/var/lib/gate

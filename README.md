@@ -272,6 +272,7 @@ report a hash of its own dictionary, and match on that.**
 gate/        the gate core, a plain Python library with no web dependency
 cli/         the `gate` command
 api/         the gate service (FastAPI): REST, WebSocket, compile workers
+web/         the 3D UI (Vite, React, TypeScript, react-three-fiber)
 vehicles/    Dockerfile and patches that build the two demo builds of Ref
 sequences/   example Fpy sequences
 rules/       example flight rules
@@ -288,7 +289,7 @@ network calls.
 - [x] Phase 1: gate core and CLI
 - [x] Phase 2: real vehicles in Docker, telemetry ingest, API, uplink
 - [x] Phase 3: testbed equivalence and flight rule checks
-- [ ] Phase 4: 3D web UI
+- [x] Phase 4: 3D web UI
 - [ ] Phase 5: simulation check
 
 ## Scope and honesty

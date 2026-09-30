@@ -210,3 +210,12 @@ def test_websocket_streams_gate_events(client: TestClient) -> None:
     assert event["type"] == "gate.decision"
     assert event["decision"]["result"] == "BLOCK"
     assert event["decision"]["vehicle_id"] == "sc2"
+
+
+def test_routine_version_poll_events_are_recognised() -> None:
+    from api.app import _is_routine
+
+    assert _is_routine("CdhCore.version.ProjectVersion")
+    assert _is_routine("CdhCore.cmdDisp.OpCodeCompleted")
+    assert not _is_routine("CdhCore.cmdDisp.OpCodeError")
+    assert not _is_routine("Ref.fpySeq.SequenceDone")

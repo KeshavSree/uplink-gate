@@ -416,6 +416,13 @@ class GateService:
         return JSONResponse(body, status_code=200)
 
 
+_ROUTINE_EVENTS = ("CdhCore.cmdDisp.OpCodeDispatched", "CdhCore.cmdDisp.OpCodeCompleted")
+
+
+def _is_routine(event_name: str) -> bool:
+    return event_name in _ROUTINE_EVENTS or event_name.startswith("CdhCore.version.")
+
+
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", Path(name).stem)
     return cleaned or "sequence"
@@ -454,7 +461,9 @@ def create_app(
         row = registry.get_vehicle(vehicle_id)
         if row is None:
             raise HTTPException(404, f"no vehicle '{vehicle_id}'")
-        events = service.manager.recent_events(vehicle_id, 50) if service.manager else []
+        events = service.manager.recent_events(vehicle_id, 400) if service.manager else []
+        # Leave out the chatter of the periodic version request, so real activity is visible.
+        events = [e for e in events if not _is_routine(e.name)][-50:]
         return service.vehicle_summary(row) | {
             "compiles": [c.to_dict() for c in registry.list_compiles(vehicle_id, limit=20)],
             "decisions": [d.to_dict() for d in registry.list_decisions(vehicle_id, limit=20)],
@@ -558,6 +567,7 @@ def create_app(
             "max_state_age_s": service.config.max_state_age_s,
             "max_decision_age_s": service.config.max_decision_age_s,
             "allow_dirty": service.config.allow_dirty,
+            "compile_pacing_s": service.settings.compile_pacing_s,
         }
 
     @app.get("/api/events/recent")

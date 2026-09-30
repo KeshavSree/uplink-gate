@@ -20,6 +20,23 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest -q
 
+  web:
+    name: Web UI tests and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
   integration:
     name: Integration tests against real Ref builds
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
