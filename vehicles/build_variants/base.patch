@@ -1,0 +1,269 @@
+diff --git a/.gitignore b/.gitignore
+index b4ff5ba..3e8f0aa 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -125,3 +125,6 @@ temp_dir/
+ *.exe
+ *.out
+ *.app
++
++# Written by the uplink-gate demo build
++TestDeploymentsProject/Ref/DictionaryId/DictionaryIdValue.hpp
+diff --git a/TestDeploymentsProject/Ref/CMakeLists.txt b/TestDeploymentsProject/Ref/CMakeLists.txt
+index 8d3dfc1..0a2a95f 100644
+--- a/TestDeploymentsProject/Ref/CMakeLists.txt
++++ b/TestDeploymentsProject/Ref/CMakeLists.txt
+@@ -14,6 +14,7 @@ add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/SignalGen/")
+ add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/TypeDemo/")
+ add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/DpDemo/")
+ add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/BlockDriver/")
++add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/DictionaryId/")
+ add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/Top/")
+ 
+ register_fprime_deployment(
+diff --git a/TestDeploymentsProject/Ref/DictionaryId/CMakeLists.txt b/TestDeploymentsProject/Ref/DictionaryId/CMakeLists.txt
+new file mode 100644
+index 0000000..ce1b779
+--- /dev/null
++++ b/TestDeploymentsProject/Ref/DictionaryId/CMakeLists.txt
+@@ -0,0 +1,11 @@
++####
++# DictionaryId: reports the identity of the dictionary this build was generated with
++####
++register_fprime_module(
++  AUTOCODER_INPUTS
++    "${CMAKE_CURRENT_LIST_DIR}/DictionaryId.fpp"
++  SOURCES
++    "${CMAKE_CURRENT_LIST_DIR}/DictionaryId.cpp"
++  HEADERS
++    "${CMAKE_CURRENT_LIST_DIR}/DictionaryId.hpp"
++)
+diff --git a/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.cpp b/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.cpp
+new file mode 100644
+index 0000000..f2b8915
+--- /dev/null
++++ b/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.cpp
+@@ -0,0 +1,23 @@
++// ======================================================================
++// \title  DictionaryId.cpp
++// \brief  cpp file for DictionaryId component implementation class
++// ======================================================================
++
++#include "Ref/DictionaryId/DictionaryId.hpp"
++
++// Written by the build after the dictionary has been generated. Defines GATE_DICTIONARY_ID.
++#include "Ref/DictionaryId/DictionaryIdValue.hpp"
++
++namespace Ref {
++
++DictionaryId ::DictionaryId(const char* const compName) : DictionaryIdComponentBase(compName) {}
++
++DictionaryId ::~DictionaryId() {}
++
++void DictionaryId ::report() {
++    Fw::String value(GATE_DICTIONARY_ID);
++    Svc::VersionStatus status = Svc::VersionStatus::OK;
++    this->setVersion_out(0, Svc::VersionCfg::VersionEnum::PROJECT_VERSION_00, value, status);
++}
++
++}  // namespace Ref
+diff --git a/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.fpp b/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.fpp
+new file mode 100644
+index 0000000..de9b823
+--- /dev/null
++++ b/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.fpp
+@@ -0,0 +1,13 @@
++module Ref {
++
++  @ Reports the identity of the dictionary this build was generated with.
++  @ The value is a prefix of the SHA-256 of the dictionary file, so the ground can tell
++  @ which dictionary matches the running build by content instead of by version label.
++  passive component DictionaryId {
++
++    @ Sets a custom version in Svc.Version, which telemeters it
++    output port setVersion: Svc.Version
++
++  }
++
++}
+diff --git a/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.hpp b/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.hpp
+new file mode 100644
+index 0000000..c4a03fb
+--- /dev/null
++++ b/TestDeploymentsProject/Ref/DictionaryId/DictionaryId.hpp
+@@ -0,0 +1,27 @@
++// ======================================================================
++// \title  DictionaryId.hpp
++// \brief  hpp file for DictionaryId component implementation class
++// ======================================================================
++
++#ifndef Ref_DictionaryId_HPP
++#define Ref_DictionaryId_HPP
++
++#include "Ref/DictionaryId/DictionaryIdComponentAc.hpp"
++
++namespace Ref {
++
++class DictionaryId final : public DictionaryIdComponentBase {
++  public:
++    //! Construct object DictionaryId
++    DictionaryId(const char* const compName /*!< The component name*/);
++
++    //! Destroy object DictionaryId
++    ~DictionaryId();
++
++    //! Report the dictionary identity of this build as custom version 0
++    void report();
++};
++
++}  // namespace Ref
++
++#endif
+diff --git a/TestDeploymentsProject/Ref/Top/RefPackets.fppi b/TestDeploymentsProject/Ref/Top/RefPackets.fppi
+index 210819c..9aa8780 100644
+--- a/TestDeploymentsProject/Ref/Top/RefPackets.fppi
++++ b/TestDeploymentsProject/Ref/Top/RefPackets.fppi
+@@ -286,7 +286,32 @@ telemetry packets RefPackets {
+     #DpCompression.dpZLibCompressorBufferManager.EmptyBuffs
+   #}
+ 
++  packet FpySeq id 39 group 2 {
++    fpySeq.State
++    fpySeq.SequencesSucceeded
++    fpySeq.SequencesFailed
++    fpySeq.SequencesCancelled
++    fpySeq.StatementsDispatched
++    fpySeq.StatementsFailed
++  }
++
+ } omit {
+   CdhCore.cmdDisp.CommandErrors
+   cmdSeq.CS_CurrentSequence
++  fpySeq.LastDirectiveError
++  fpySeq.DirectiveErrorIndex
++  fpySeq.DirectiveErrorId
++  fpySeq.SeqPath
++  fpySeq.Debug_ReachedEndOfFile
++  fpySeq.Debug_NextStatementReadSuccess
++  fpySeq.Debug_NextStatementOpcode
++  fpySeq.Debug_NextStatementIndex
++  fpySeq.Debug_NextCmdOpcode
++  fpySeq.Debug_StackSize
++  fpySeq.BreakpointInUse
++  fpySeq.BreakpointIndex
++  fpySeq.BreakOnlyOnceOnBreakpoint
++  fpySeq.BreakBeforeNextLine
++  fpySeq.PRM_STATEMENT_TIMEOUT_SECS
++  fpySeq.PRM_SEQ_BASE_DIR
+ }
+diff --git a/TestDeploymentsProject/Ref/Top/RefTopology.cpp b/TestDeploymentsProject/Ref/Top/RefTopology.cpp
+index b7e17aa..394c941 100644
+--- a/TestDeploymentsProject/Ref/Top/RefTopology.cpp
++++ b/TestDeploymentsProject/Ref/Top/RefTopology.cpp
+@@ -54,6 +54,9 @@ void configureTopology() {
+     // Command sequencer needs to allocate memory to hold contents of command sequences
+     cmdSeq.allocateBuffer(0, mallocator, 5 * 1024);
+ 
++    // Fpy sequencer needs memory to hold the bytecode of the sequence it runs
++    fpySeq.allocateBuffer(0, mallocator, 16 * 1024);
++
+     // Restrict uplinked files to a sandbox directory to prevent path-traversal writes
+     FileHandling::fileUplink.configure("/tmp/uplink/");
+ 
+@@ -88,6 +91,9 @@ void setupTopology(const TopologyState& state) {
+         Os::TaskString name("ReceiveTask");
+         comDriver.start(name, COMM_PRIORITY, Default::STACK_SIZE);
+     }
++    // Report the dictionary identity as a custom version, so the ground can tell which dictionary
++    // this build matches by content instead of by the project version label.
++    dictionaryId.report();
+ }
+ 
+ void startRateGroups(const Fw::TimeInterval& interval) {
+@@ -113,6 +119,7 @@ void teardownTopology(const TopologyState& state) {
+ 
+     // Resource deallocation
+     cmdSeq.deallocateBuffer(mallocator);
++    fpySeq.deallocateBuffer(mallocator);
+     tearDownComponents(state);
+     deinitComponents(state);
+ }
+diff --git a/TestDeploymentsProject/Ref/Top/RefTopologyDefs.hpp b/TestDeploymentsProject/Ref/Top/RefTopologyDefs.hpp
+index 4854abb..ffd9be3 100644
+--- a/TestDeploymentsProject/Ref/Top/RefTopologyDefs.hpp
++++ b/TestDeploymentsProject/Ref/Top/RefTopologyDefs.hpp
+@@ -65,6 +65,9 @@ enum { WARN = 3, FATAL = 5 };
+ namespace Ref_cmdSeq {
+ enum { WARN = 3, FATAL = 5 };
+ }
++namespace Ref_fpySeq {
++enum { WARN = 3, FATAL = 5 };
++}
+ }  // namespace PingEntries
+ 
+ // Definitions are placed within a namespace named after the deployment
+diff --git a/TestDeploymentsProject/Ref/Top/instances.fpp b/TestDeploymentsProject/Ref/Top/instances.fpp
+index aa3bd73..fdac6de 100644
+--- a/TestDeploymentsProject/Ref/Top/instances.fpp
++++ b/TestDeploymentsProject/Ref/Top/instances.fpp
+@@ -58,6 +58,12 @@ module Ref {
+     stack size Default.STACK_SIZE \
+     priority 20
+ 
++  @ Runs Fpy bytecode sequences (added for the uplink gate demo)
++  instance fpySeq: Svc.FpySequencer base id 0x10008000 \
++    queue size Default.QUEUE_SIZE \
++    stack size Default.STACK_SIZE \
++    priority 18
++
+   instance dpDemo: Ref.DpDemo base id 0x0A10 \
+     queue size Default.QUEUE_SIZE \
+     stack size Default.STACK_SIZE \
+@@ -101,4 +107,6 @@ module Ref {
+ 
+   instance comDriver: Drv.TcpClient base id 0x10025000
+ 
++  instance dictionaryId: Ref.DictionaryId base id 0x10026000
++
+ }
+diff --git a/TestDeploymentsProject/Ref/Top/topology.fpp b/TestDeploymentsProject/Ref/Top/topology.fpp
+index dd6b478..370b1ea 100644
+--- a/TestDeploymentsProject/Ref/Top/topology.fpp
++++ b/TestDeploymentsProject/Ref/Top/topology.fpp
+@@ -46,6 +46,8 @@ module Ref {
+     instance linuxTimer
+     instance comDriver
+     instance cmdSeq
++    instance fpySeq
++    instance dictionaryId
+ 
+     # ----------------------------------------------------------------------
+     # Pattern graph specifiers
+@@ -90,6 +92,8 @@ module Ref {
+       rateGroup1Comp.RateGroupMemberOut[5] -> ComCcsds.Subtopology.comQueueRun
+       rateGroup1Comp.RateGroupMemberOut[6] -> CdhCore.Subtopology.cmdDispRun
+       rateGroup1Comp.RateGroupMemberOut[7] -> ComCcsds.Subtopology.aggregatorTimeout
++      rateGroup1Comp.RateGroupMemberOut[8] -> fpySeq.checkTimers
++      rateGroup1Comp.RateGroupMemberOut[9] -> fpySeq.tlmWrite
+ 
+       # Rate group 2
+       rateGroupDriverComp.CycleOut[Ports_RateGroups.rateGroup2] -> rateGroup2Comp.CycleIn
+@@ -159,6 +163,18 @@ module Ref {
+       CdhCore.Subtopology.seqCmdStatus       -> ComCcsds.Subtopology.cmdResponseIn
+       cmdSeq.comCmdOut                       -> CdhCore.Subtopology.seqCmdBuff
+       CdhCore.Subtopology.seqCmdStatus       -> cmdSeq.cmdResponseIn
++      fpySeq.cmdOut                          -> CdhCore.Subtopology.seqCmdBuff
++      CdhCore.Subtopology.seqCmdStatus       -> fpySeq.cmdResponseIn
++    }
++
++    connections BuildIdentity {
++      dictionaryId.setVersion -> CdhCore.version.setVersion
++    }
++
++    connections FpySequencing {
++      # Lets sequences read telemetry channels and parameters
++      fpySeq.getTlmChan -> CdhCore.tlmSend.TlmGet
++      fpySeq.getParam   -> FileHandling.prmDb.getPrm
+     }
+ 
+     connections ComCcsds_FileHandling {

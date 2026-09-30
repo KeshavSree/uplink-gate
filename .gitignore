@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+
+# Gate working state (registry database, stored dictionaries)
+.gate/
+
+# Compiled sequences and their sidecar files
+sequences/*.bin
+sequences/*.bin.gate.json
+
+# fprime-gds logs
+logs/
+
+# Web UI
+web/node_modules/
+web/dist/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

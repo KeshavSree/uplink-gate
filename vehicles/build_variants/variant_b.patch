@@ -1,0 +1,38 @@
+diff --git a/TestDeploymentsProject/Ref/SignalGen/Commands.fppi b/TestDeploymentsProject/Ref/SignalGen/Commands.fppi
+index cb22697..5292367 100644
+--- a/TestDeploymentsProject/Ref/SignalGen/Commands.fppi
++++ b/TestDeploymentsProject/Ref/SignalGen/Commands.fppi
+@@ -1,6 +1,6 @@
+ @ Signal Generator Settings
+ async command Settings(
+-                                  Frequency: U32
++                                  Frequency: U16
+                                   Amplitude: F32
+                                   Phase: F32
+                                   SigType: Ref.SignalType
+diff --git a/TestDeploymentsProject/Ref/SignalGen/SignalGen.cpp b/TestDeploymentsProject/Ref/SignalGen/SignalGen.cpp
+index f6770ed..fef3ee5 100644
+--- a/TestDeploymentsProject/Ref/SignalGen/SignalGen.cpp
++++ b/TestDeploymentsProject/Ref/SignalGen/SignalGen.cpp
+@@ -153,7 +153,7 @@ void SignalGen::schedIn_handler(FwIndexType portNum, /*!< The port number*/
+ 
+ void SignalGen::Settings_cmdHandler(FwOpcodeType opCode, /*!< The opcode*/
+                                     U32 cmdSeq,          /*!< The command sequence number*/
+-                                    U32 Frequency,
++                                    U16 Frequency,
+                                     F32 Amplitude,
+                                     F32 Phase,
+                                     const Ref::SignalType& SigType) {
+diff --git a/TestDeploymentsProject/Ref/SignalGen/SignalGen.hpp b/TestDeploymentsProject/Ref/SignalGen/SignalGen.hpp
+index 98466a0..570ea9c 100644
+--- a/TestDeploymentsProject/Ref/SignalGen/SignalGen.hpp
++++ b/TestDeploymentsProject/Ref/SignalGen/SignalGen.hpp
+@@ -30,7 +30,7 @@ class SignalGen final : public SignalGenComponentBase {
+ 
+     void Settings_cmdHandler(FwOpcodeType opCode, /*!< The opcode*/
+                              U32 cmdSeq,          /*!< The command sequence number*/
+-                             U32 Frequency,
++                             U16 Frequency,
+                              F32 Amplitude,
+                              F32 Phase,
+                              const Ref::SignalType& SigType) final;
