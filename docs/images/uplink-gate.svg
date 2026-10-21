@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+<title id="title">Uplink Gate: match the dictionary before sending</title>
+<desc id="desc">A compile record provides the dictionary hash used for bytecode. Live telemetry provides the vehicle's dictionary identity. The gate compares them and blocks a mismatch before uplink.</desc>
+<rect width="1200" height="330" rx="12" fill="#101214"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="40" y="54" fill="#f1f3f5" font-size="28" font-weight="700">The right sequence. For the running build.</text>
+<text x="40" y="85" fill="#a8afb8" font-size="17">Dictionary identity connects compilation, testbed evidence and live telemetry.</text>
+<g fill="#1b1f24" stroke="#414852"><rect x="40" y="125" width="320" height="105" rx="5"/><rect x="840" y="125" width="320" height="105" rx="5"/><rect x="460" y="125" width="280" height="105" rx="5"/></g>
+<g fill="#edf0f3" font-size="21" font-weight="700"><text x="62" y="159">Compiled bytecode</text><text x="862" y="159">Running vehicle</text><text x="600" y="159" text-anchor="middle">Uplink gate</text></g>
+<g fill="#adb6c0" font-size="16"><text x="62" y="190">Dictionary hash in compile record</text><text x="862" y="190">Dictionary identity from telemetry</text><text x="600" y="190" text-anchor="middle">Compare before sending</text></g>
+<g stroke="#adb6c0" stroke-width="2" fill="none"><path d="M360 178H446m-9-6 9 6-9 6"/><path d="M840 178H754m9-6-9 6 9 6"/></g>
+<text x="600" y="275" text-anchor="middle" fill="#ef746e" font-size="20" font-weight="700">Dictionary mismatch → BLOCK</text>
+<text x="600" y="303" text-anchor="middle" fill="#a8afb8" font-size="15">A match is required; every other configured check must also pass.</text>
+</g></svg>
